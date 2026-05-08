@@ -7,6 +7,25 @@ import (
 	"testing"
 )
 
+// mockCrossrefHandler points crossrefBase at an httptest server with the
+// given handler, restoring the original on test cleanup.
+func mockCrossrefHandler(t *testing.T, h http.HandlerFunc) {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	orig := crossrefBase
+	t.Cleanup(func() { crossrefBase = orig })
+	crossrefBase = srv.URL
+}
+
+// mockCrossrefBody is the common case: respond with a fixed JSON body.
+func mockCrossrefBody(t *testing.T, body string) {
+	t.Helper()
+	mockCrossrefHandler(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(body))
+	})
+}
+
 func TestNormalizeDOI(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -58,7 +77,7 @@ func TestCitationText(t *testing.T) {
 
 func TestFetchMetadata(t *testing.T) {
 	t.Run("happy path", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mockCrossrefHandler(t, func(w http.ResponseWriter, r *http.Request) {
 			if !strings.HasPrefix(r.URL.Path, "/works/") {
 				t.Errorf("unexpected path %q", r.URL.Path)
 			}
@@ -73,10 +92,7 @@ func TestFetchMetadata(t *testing.T) {
                 "author":[{"given":"Alice","family":"Smith"},{"given":"Paul L","family":"Gribble"},{"given":"Émile","family":"Zola"}],
                 "published-print":{"date-parts":[[2024,5,1]]}
             }}`))
-		}))
-		t.Cleanup(srv.Close)
-		t.Cleanup(func(orig string) func() { return func() { crossrefBase = orig } }(crossrefBase))
-		crossrefBase = srv.URL
+		})
 
 		p, err := fetchMetadata("10.1/x")
 		if err != nil {
@@ -89,30 +105,21 @@ func TestFetchMetadata(t *testing.T) {
 	})
 
 	t.Run("404", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mockCrossrefHandler(t, func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "nope", http.StatusNotFound)
-		}))
-		t.Cleanup(srv.Close)
-		t.Cleanup(func(orig string) func() { return func() { crossrefBase = orig } }(crossrefBase))
-		crossrefBase = srv.URL
+		})
 
-		_, err := fetchMetadata("10.1/x")
-		if err == nil {
+		if _, err := fetchMetadata("10.1/x"); err == nil {
 			t.Fatal("expected error on 404")
 		}
 	})
 
 	t.Run("article-number fallback", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte(`{"message":{
-                "title":["T"],"container-title":["J"],
-                "article-number":"e12345",
-                "issued":{"date-parts":[[2025]]}
-            }}`))
-		}))
-		t.Cleanup(srv.Close)
-		t.Cleanup(func(orig string) func() { return func() { crossrefBase = orig } }(crossrefBase))
-		crossrefBase = srv.URL
+		mockCrossrefBody(t, `{"message":{
+            "title":["T"],"container-title":["J"],
+            "article-number":"e12345",
+            "issued":{"date-parts":[[2025]]}
+        }}`)
 
 		p, err := fetchMetadata("10.1/x")
 		if err != nil {
@@ -127,19 +134,14 @@ func TestFetchMetadata(t *testing.T) {
 	})
 
 	t.Run("biorxiv institution fallback", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte(`{"message":{
-                "title":["Preprint Title"],
-                "container-title":[],
-                "institution":[{"name":"bioRxiv"}],
-                "type":"posted-content",
-                "subtype":"preprint",
-                "issued":{"date-parts":[[2020]]}
-            }}`))
-		}))
-		t.Cleanup(srv.Close)
-		t.Cleanup(func(orig string) func() { return func() { crossrefBase = orig } }(crossrefBase))
-		crossrefBase = srv.URL
+		mockCrossrefBody(t, `{"message":{
+            "title":["Preprint Title"],
+            "container-title":[],
+            "institution":[{"name":"bioRxiv"}],
+            "type":"posted-content",
+            "subtype":"preprint",
+            "issued":{"date-parts":[[2020]]}
+        }}`)
 
 		p, err := fetchMetadata("10.1101/2020.03.25.008466")
 		if err != nil {
@@ -151,16 +153,11 @@ func TestFetchMetadata(t *testing.T) {
 	})
 
 	t.Run("year falls through to published-online", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte(`{"message":{
-                "title":["T"],"container-title":["J"],
-                "published-online":{"date-parts":[[2023,2,3]]},
-                "issued":{"date-parts":[[2022]]}
-            }}`))
-		}))
-		t.Cleanup(srv.Close)
-		t.Cleanup(func(orig string) func() { return func() { crossrefBase = orig } }(crossrefBase))
-		crossrefBase = srv.URL
+		mockCrossrefBody(t, `{"message":{
+            "title":["T"],"container-title":["J"],
+            "published-online":{"date-parts":[[2023,2,3]]},
+            "issued":{"date-parts":[[2022]]}
+        }}`)
 
 		p, err := fetchMetadata("10.1/x")
 		if err != nil {
@@ -168,6 +165,15 @@ func TestFetchMetadata(t *testing.T) {
 		}
 		if p.Year != "2023" {
 			t.Errorf("expected published-online year 2023, got %q", p.Year)
+		}
+	})
+
+	t.Run("trailing slash on base", func(t *testing.T) {
+		mockCrossrefBody(t, `{"message":{"title":["T"]}}`)
+		crossrefBase = crossrefBase + "/"
+
+		if _, err := fetchMetadata("10.1/x"); err != nil {
+			t.Fatalf("trailing slash on base broke fetch: %v", err)
 		}
 	})
 }
@@ -225,6 +231,23 @@ func TestBibEscape(t *testing.T) {
 	}
 }
 
+func TestBibAsciiFold(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"ASCII", "ASCII"},
+		{"Müller", "Muller"},
+		{"Émile", "Emile"},
+		{"Zoë", "Zoe"},
+		{"naïve", "naive"},
+		{"Çelik", "Celik"},
+	}
+	for _, c := range cases {
+		if got := bibAsciiFold(c.in); got != c.want {
+			t.Errorf("bibAsciiFold(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestBibKey(t *testing.T) {
 	used := map[string]int{}
 	p1 := Paper{Authors: "Smith J., Jones A.", Year: "2024", Title: "A Cool Paper About Stuff"}
@@ -238,5 +261,10 @@ func TestBibKey(t *testing.T) {
 	p2 := Paper{}
 	if got := bibKey(p2, used); got != "paper" {
 		t.Errorf("empty paper key = %q, want %q", got, "paper")
+	}
+
+	p3 := Paper{Authors: "Müller H.", Year: "2024", Title: "On X"}
+	if got := bibKey(p3, used); got != "muller2024on" {
+		t.Errorf("diacritic key = %q, want %q", got, "muller2024on")
 	}
 }
