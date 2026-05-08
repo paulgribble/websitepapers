@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var crossrefBase = "https://api.crossref.org"
@@ -101,11 +102,12 @@ func fetchMetadata(doi string) (Paper, error) {
 	return paper, nil
 }
 
-// givenInitials emits one initial per whitespace-separated token of the
-// given name. "Paul L" -> "P. L."; "Émile" -> "É."
+// givenInitials emits one initial per letter-run in the given name. Splits
+// on any non-letter so smashed initials work too: "Andrew A.G." yields
+// "A. A. G." rather than "A. A." (which whitespace-only splitting produced).
 func givenInitials(given string) string {
 	var parts []string
-	for _, tok := range strings.Fields(given) {
+	for _, tok := range strings.FieldsFunc(given, func(r rune) bool { return !unicode.IsLetter(r) }) {
 		for _, r := range tok {
 			parts = append(parts, string(r)+".")
 			break

@@ -188,6 +188,10 @@ func TestGivenInitials(t *testing.T) {
 		{"  Paul   L  ", "P. L."},
 		{"Émile", "É."},
 		{"J", "J."},
+		{"Andrew A.G.", "A. A. G."},
+		{"A.G.", "A. G."},
+		{"A. G.", "A. G."},
+		{"Marie-Claude", "M. C."},
 	}
 	for _, c := range cases {
 		if got := givenInitials(c.in); got != c.want {
