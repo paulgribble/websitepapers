@@ -17,7 +17,10 @@ import (
 
 var doiRegex = regexp.MustCompile(`(?i)^10\.\d{4,}(?:\.\d+)?/\S+$`)
 
+var crossrefBase = "https://api.crossref.org"
+
 type Paper struct {
+	ID      int
 	DOI     string
 	Title   string
 	Authors string
@@ -65,9 +68,15 @@ func main() {
 	db.Exec("ALTER TABLE papers ADD COLUMN volume TEXT")
 	db.Exec("ALTER TABLE papers ADD COLUMN page TEXT")
 
+	if _, err := db.Exec("UPDATE papers SET doi = LOWER(doi) WHERE doi != LOWER(doi)"); err != nil {
+		log.Println("DOI lowercasing migration:", err)
+	}
+
 	http.HandleFunc("/", handleHome)
 	http.HandleFunc("/submit", handleSubmit)
+	http.HandleFunc("/delete", handleDelete)
 	http.HandleFunc("/export", handleExport)
+	http.HandleFunc("/export.bib", handleExportBib)
 
 	log.Println("Server starting at http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -142,6 +151,52 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if _, err := db.Exec("DELETE FROM papers WHERE id=?", r.FormValue("id")); err != nil {
+		log.Println("Delete error:", err)
+		renderTemplate(w, "Failed to delete paper.", getPapers())
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func handleExportBib(w http.ResponseWriter, r *http.Request) {
+	papers := getPapers()
+
+	w.Header().Set("Content-Type", "application/x-bibtex; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="papers.bib"`)
+
+	used := map[string]int{}
+	for _, p := range papers {
+		key := bibKey(p, used)
+		fmt.Fprintf(w, "@article{%s,\n", key)
+		if p.Authors != "" {
+			fmt.Fprintf(w, "  author  = {%s},\n", bibAuthors(p.Authors))
+		}
+		if p.Title != "" {
+			fmt.Fprintf(w, "  title   = {{%s}},\n", bibEscape(p.Title))
+		}
+		if p.Journal != "" {
+			fmt.Fprintf(w, "  journal = {%s},\n", bibEscape(p.Journal))
+		}
+		if p.Year != "" {
+			fmt.Fprintf(w, "  year    = {%s},\n", p.Year)
+		}
+		if p.Volume != "" {
+			fmt.Fprintf(w, "  volume  = {%s},\n", bibEscape(p.Volume))
+		}
+		if p.Pages != "" {
+			fmt.Fprintf(w, "  pages   = {%s},\n", bibEscape(p.Pages))
+		}
+		fmt.Fprintf(w, "  doi     = {%s}\n", p.DOI)
+		fmt.Fprint(w, "}\n\n")
+	}
+}
+
 // --- HELPERS ---
 
 // citationText builds the display text for a paper's citation link.
@@ -169,15 +224,100 @@ func citationText(p Paper) string {
 	return p.Journal
 }
 
-func fetchMetadata(doi string) (Paper, error) {
-	apiURL := &url.URL{
-		Scheme: "https",
-		Host:   "api.crossref.org",
-		Path:   "/works/" + doi,
+func bibKey(p Paper, used map[string]int) string {
+	var first string
+	if p.Authors != "" {
+		if i := strings.IndexAny(p.Authors, " ,"); i > 0 {
+			first = p.Authors[:i]
+		} else {
+			first = p.Authors
+		}
 	}
-	client := http.Client{Timeout: 10 * time.Second}
+	var titleWord string
+	for _, w := range strings.Fields(p.Title) {
+		if w := bibAlpha(w); w != "" {
+			titleWord = w
+			break
+		}
+	}
+	base := strings.ToLower(bibAlpha(first) + p.Year + titleWord)
+	if base == "" {
+		base = "paper"
+	}
+	used[base]++
+	if used[base] == 1 {
+		return base
+	}
+	return fmt.Sprintf("%s_%d", base, used[base])
+}
 
-	resp, err := client.Get(apiURL.String())
+func givenInitials(given string) string {
+	var parts []string
+	for _, tok := range strings.Fields(given) {
+		for _, r := range tok {
+			parts = append(parts, string(r)+".")
+			break
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func bibAlpha(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func bibAuthors(s string) string {
+	parts := strings.Split(s, ", ")
+	for i, p := range parts {
+		tokens := strings.Fields(p)
+		split := -1
+		for j, t := range tokens {
+			if isInitial(t) {
+				split = j
+				break
+			}
+		}
+		if split > 0 {
+			parts[i] = strings.Join(tokens[:split], " ") + ", " + strings.Join(tokens[split:], " ")
+		}
+	}
+	return strings.Join(parts, " and ")
+}
+
+func isInitial(t string) bool {
+	r := []rune(t)
+	return len(r) == 2 && r[1] == '.'
+}
+
+func bibEscape(s string) string {
+	r := strings.NewReplacer(
+		`\`, `\textbackslash{}`,
+		`&`, `\&`,
+		`%`, `\%`,
+		`_`, `\_`,
+		`#`, `\#`,
+		`$`, `\$`,
+		`{`, `\{`,
+		`}`, `\}`,
+	)
+	return r.Replace(s)
+}
+
+func fetchMetadata(doi string) (Paper, error) {
+	req, err := http.NewRequest("GET", crossrefBase+"/works/"+url.PathEscape(doi), nil)
+	if err != nil {
+		return Paper{DOI: doi}, err
+	}
+	req.Header.Set("User-Agent", "websitepapers/0.1 (mailto:pgribble@uwo.ca)")
+
+	client := http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return Paper{DOI: doi}, err
 	}
@@ -191,10 +331,13 @@ func fetchMetadata(doi string) (Paper, error) {
 		Message struct {
 			Title          []string `json:"title"`
 			ContainerTitle []string `json:"container-title"`
-			Volume         string   `json:"volume"`
-			Page           string   `json:"page"`
-			ArticleNumber  string   `json:"article-number"`
-			Author         []struct {
+			Institution    []struct {
+				Name string `json:"name"`
+			} `json:"institution"`
+			Volume        string `json:"volume"`
+			Page          string `json:"page"`
+			ArticleNumber string `json:"article-number"`
+			Author        []struct {
 				Given  string `json:"given"`
 				Family string `json:"family"`
 			} `json:"author"`
@@ -222,6 +365,8 @@ func fetchMetadata(doi string) (Paper, error) {
 	}
 	if len(m.ContainerTitle) > 0 {
 		paper.Journal = m.ContainerTitle[0]
+	} else if len(m.Institution) > 0 {
+		paper.Journal = m.Institution[0].Name
 	}
 	paper.Volume = m.Volume
 	paper.Pages = m.Page
@@ -232,8 +377,8 @@ func fetchMetadata(doi string) (Paper, error) {
 	var authors []string
 	for _, a := range m.Author {
 		name := a.Family
-		if len(a.Given) > 0 {
-			name += " " + string(a.Given[0]) + "."
+		if initials := givenInitials(a.Given); initials != "" {
+			name += " " + initials
 		}
 		authors = append(authors, name)
 	}
@@ -250,7 +395,7 @@ func fetchMetadata(doi string) (Paper, error) {
 }
 
 func getPapers() []Paper {
-	rows, err := db.Query("SELECT doi, title, authors, journal, pub_date, COALESCE(volume,''), COALESCE(page,'') FROM papers ORDER BY id DESC")
+	rows, err := db.Query("SELECT id, doi, title, authors, journal, pub_date, COALESCE(volume,''), COALESCE(page,'') FROM papers ORDER BY id DESC")
 	if err != nil {
 		log.Println("Query error:", err)
 		return nil
@@ -260,7 +405,7 @@ func getPapers() []Paper {
 	var list []Paper
 	for rows.Next() {
 		var p Paper
-		if err := rows.Scan(&p.DOI, &p.Title, &p.Authors, &p.Journal, &p.Year, &p.Volume, &p.Pages); err != nil {
+		if err := rows.Scan(&p.ID, &p.DOI, &p.Title, &p.Authors, &p.Journal, &p.Year, &p.Volume, &p.Pages); err != nil {
 			log.Println("Scan error:", err)
 			continue
 		}
@@ -281,10 +426,10 @@ func normalizeDOI(input string) string {
 		"dx.doi.org/", "doi.org/",
 	} {
 		if strings.HasPrefix(lower, p) {
-			return input[len(p):]
+			return lower[len(p):]
 		}
 	}
-	return input
+	return lower
 }
 
 func renderTemplate(w http.ResponseWriter, msg string, list []Paper) {

@@ -23,6 +23,8 @@
         .meta { color: #555; font-size: 12px; }
         .journal { font-style: italic; color: #006621; }
         .doi-link { color: #777; font-family: monospace; font-size: 11px; }
+        .delete-btn { background: none; border: none; color: #999; cursor: pointer; font-size: 14px; padding: 2px 6px; }
+        .delete-btn:hover { color: #d93025; }
     </style>
 </head>
 <body>
@@ -35,7 +37,8 @@
     <form action="/submit" method="POST">
         <input type="text" name="doi" placeholder="Paste DOI or URL (e.g., 10.1038/s41586-021-03491-6)" required>
         <button type="submit">Fetch & Add</button>
-        <a href="/export" class="export-btn">Export</a>
+        <a href="/export" class="export-btn">Export MD</a>
+        <a href="/export.bib" class="export-btn">Export BibTeX</a>
     </form>
 
     <div class="table-container">
@@ -43,8 +46,9 @@
             <thead>
                 <tr>
                     <th style="width: 35%;">Paper Details</th>
-                    <th style="width: 35%;">Authors</th>
+                    <th style="width: 30%;">Authors</th>
                     <th style="width: 30%;">Journal / Date</th>
+                    <th style="width: 5%;"></th>
                 </tr>
             </thead>
             <tbody>
@@ -59,9 +63,15 @@
                         <div class="journal">{{.Journal}}{{if .Volume}} {{.Volume}}{{if .Pages}}:{{.Pages}}{{end}}{{else if .Pages}} {{.Pages}}{{end}}</div>
                         <div class="meta">{{.Year}}</div>
                     </td>
+                    <td>
+                        <form method="POST" action="/delete" onsubmit="return confirm('Delete this paper?');" style="margin:0;">
+                            <input type="hidden" name="id" value="{{.ID}}">
+                            <button type="submit" class="delete-btn" title="Delete">&#x2715;</button>
+                        </form>
+                    </td>
                 </tr>
                 {{else}}
-                <tr><td colspan="3" style="text-align:center; padding: 40px; color: #999;">Library is empty.</td></tr>
+                <tr><td colspan="4" style="text-align:center; padding: 40px; color: #999;">Library is empty.</td></tr>
                 {{end}}
             </tbody>
         </table>
