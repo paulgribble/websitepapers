@@ -33,7 +33,7 @@ All six `.go` source files share `package main`, so no import boilerplate betwee
 ## How to run / test
 
 ```bash
-go run main.go            # server starts at http://localhost:8080
+go run .                  # server starts at http://localhost:8080
 go test ./...             # run all unit tests
 go vet ./...              # static analysis
 ```

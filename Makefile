@@ -4,7 +4,7 @@ build:
 	go build -o doi-app .
 
 run:
-	go run main.go
+	go run .
 
 test:
 	go test ./...
