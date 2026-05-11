@@ -1,4 +1,7 @@
+import base64
 import io
+import os
+import secrets
 import sqlite3
 
 from flask import Flask, Response, redirect, render_template, request
@@ -9,6 +12,41 @@ from db import Paper, delete_paper, get_papers, init_db, insert_paper, paper_exi
 from doi import DOI_REGEX, normalize_doi
 
 app = Flask(__name__)
+
+BASIC_AUTH_USER = os.environ.get("BASIC_AUTH_USER", "")
+BASIC_AUTH_PASS = os.environ.get("BASIC_AUTH_PASS", "")
+
+
+def _basic_auth_ok(header: str) -> bool:
+    if not header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    user, sep, pw = decoded.partition(":")
+    if not sep:
+        return False
+    return (
+        secrets.compare_digest(user, BASIC_AUTH_USER)
+        and secrets.compare_digest(pw, BASIC_AUTH_PASS)
+    )
+
+
+@app.before_request
+def _require_basic_auth():
+    if not (BASIC_AUTH_USER and BASIC_AUTH_PASS):
+        return
+    # /up is the container HEALTHCHECK target; it must stay open.
+    if request.path == "/up":
+        return
+    if _basic_auth_ok(request.headers.get("Authorization", "")):
+        return
+    return Response(
+        "Authentication required",
+        status=401,
+        headers={"WWW-Authenticate": 'Basic realm="websitepapers"'},
+    )
 
 
 def render_page(status: int = 200, message: str = ""):

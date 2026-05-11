@@ -147,6 +147,21 @@ To build locally instead of pulling: `make docker-build && make docker-run`.
 
 The image is compatible with [ONCE](https://github.com/basecamp/once) (Basecamp's self-hosting platform): it serves HTTP on port 80, exposes a `/up` healthcheck, and persists data in `/storage`. To install, run `once` and paste `ghcr.io/paulgribble/websitepapers:latest` at the image-path prompt.
 
+## Authentication
+
+The app supports optional HTTP Basic Auth via two environment variables:
+
+```
+BASIC_AUTH_USER=<your-username>
+BASIC_AUTH_PASS=<your-password>
+```
+
+- If **both** are set, every route except `/up` requires the credentials. Your browser will prompt on first visit.
+- If **either** is unset, auth is disabled (this is the default — fine for `make run` on `localhost`).
+- The `/up` healthcheck stays open so the Docker `HEALTHCHECK` and ONCE's monitoring continue to work without credentials.
+
+For ONCE deployments, set these in the app's environment via the ONCE admin UI — the password lives in ONCE's secret store, not in the image or your repo. There is no signup flow and no per-user accounts; it's a single shared credential intended for one-person libraries.
+
 ## Project layout
 
 ```

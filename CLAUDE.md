@@ -11,6 +11,7 @@ The original Go implementation is preserved verbatim in `old_go/` (no longer mai
 - **Templating**: Jinja2 (bundled with Flask)
 - **Production server**: Gunicorn (used inside Docker via `wsgi.py`; `app.run()` is dev-only)
 - **Database**: SQLite via stdlib `sqlite3` (no cgo, no compiler needed). Path is read from `DB_PATH` env var (default `./dois.db`; Docker image sets `/storage/dois.db`)
+- **Auth**: optional HTTP Basic Auth via `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` env vars. If both are set, every route except `/up` requires the credentials; if either is unset, auth is disabled. Compared with `secrets.compare_digest` (constant-time). Intended for ONCE-hosted deployments where ONCE handles TLS but not app-level auth.
 - **External API**: Crossref (`https://api.crossref.org/works/{doi}`), 10s urllib timeout, polite-pool `User-Agent` header
 - **HTTP client**: stdlib `urllib.request`
 - **Unicode**: stdlib `unicodedata` (NFD normalization for ASCII-folding citation keys)
@@ -91,6 +92,8 @@ Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` wo
 ### app.py
 |            Function             |                                     Purpose                                      |
 | ------------------------------- | -------------------------------------------------------------------------------- |
+| `_basic_auth_ok(header)`        | Decode an `Authorization: Basic ...` header and constant-time-compare against `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` |
+| `_require_basic_auth()`         | `@app.before_request` hook — 401s every route except `/up` when both env vars are set; no-op when unset |
 | `home()`                        | Render paper list (GET only)                                                     |
 | `health()`                      | `GET /up` — returns `("OK", 200, {"Content-Type": "text/plain; charset=utf-8"})` |
 | `submit()`                      | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                    |
