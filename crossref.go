@@ -47,7 +47,7 @@ func fetchMetadata(doi string) (Paper, error) {
 	if err != nil {
 		return Paper{}, err
 	}
-	req.Header.Set("User-Agent", "websitepapers/0.1 (mailto:pgribble@uwo.ca)")
+	req.Header.Set("User-Agent", "websitepapers/0.1 (mailto:pgribblle@uwo.ca)")
 
 	client := http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
