@@ -1,7 +1,8 @@
+import os
 import sqlite3
 from dataclasses import dataclass
 
-DB_PATH = "./dois.db"
+DB_PATH = os.environ.get("DB_PATH", "./dois.db")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers (

@@ -28,6 +28,11 @@ def home():
     return render_page()
 
 
+@app.route("/up", methods=["GET"])
+def health():
+    return "OK", 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
 @app.route("/submit", methods=["GET", "POST"])
 def submit():
     if request.method != "POST":
