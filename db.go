@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-// openDB opens the SQLite file, creates the schema if needed, and runs the
-// idempotent migrations.
 func openDB(path string) (*sql.DB, error) {
 	d, err := sql.Open("sqlite3", path)
 	if err != nil {

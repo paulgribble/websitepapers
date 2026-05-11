@@ -75,8 +75,7 @@ func bibKey(p Paper, used map[string]int) string {
 	return fmt.Sprintf("%s_%d", base, used[base])
 }
 
-// bibAlpha keeps only ASCII letters and digits, after folding Latin
-// diacritics to their base letters.
+// bibAlpha runs after ASCII-folding so "Müller" contributes "Muller" to the key.
 func bibAlpha(s string) string {
 	s = bibAsciiFold(s)
 	var b strings.Builder

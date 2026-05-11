@@ -110,14 +110,14 @@ func citationText(p Paper) string {
 			return p.Journal + ":" + p.DOI[idx+1:]
 		}
 	}
-	if p.Volume != "" && p.Pages != "" {
+	switch {
+	case p.Volume != "" && p.Pages != "":
 		return p.Journal + " " + p.Volume + ":" + p.Pages
-	}
-	if p.Volume != "" {
+	case p.Volume != "":
 		return p.Journal + " " + p.Volume
-	}
-	if p.Pages != "" {
+	case p.Pages != "":
 		return p.Journal + " " + p.Pages
+	default:
+		return p.Journal
 	}
-	return p.Journal
 }
