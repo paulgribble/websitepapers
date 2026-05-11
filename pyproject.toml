@@ -1,0 +1,13 @@
+[project]
+name = "websitepapers"
+version = "0.1.0"
+description = "Collect, browse, and export academic papers by DOI"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]

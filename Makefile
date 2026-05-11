@@ -1,17 +1,13 @@
-.PHONY: build run test fmt clean
+.PHONY: install run test clean
 
-build:
-	go build -o doi-app .
+install:
+	uv sync
 
 run:
-	go run .
+	uv run python app.py
 
 test:
-	go test ./...
-
-fmt:
-	gofmt -w .
-	go vet ./...
+	uv run pytest
 
 clean:
-	rm -f doi-app
+	rm -rf .venv __pycache__ */__pycache__ .pytest_cache uv.lock

@@ -1,3 +1,5 @@
 /doi-app
 .DS_Store
+__pycache__
+uv.lock
 

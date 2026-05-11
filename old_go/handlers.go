@@ -7,10 +7,11 @@ import (
 	"strings"
 )
 
-// respondErr logs an error and renders the page with a status code and
-// user-visible message. Keeps handler error branches to a single line.
-func respondErr(w http.ResponseWriter, status int, msg, logCtx string, err error) {
-	log.Println(logCtx+":", err)
+// respondErr logs the underlying error and renders the page with a status
+// code and user-facing message. The user-facing message doubles as the log
+// label so operator-side log lines correlate with reported issues.
+func respondErr(w http.ResponseWriter, status int, msg string, err error) {
+	log.Printf("%s: %v", msg, err)
 	renderTemplate(w, status, msg, getPapers())
 }
 
@@ -36,7 +37,7 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	exists, err := paperExists(cleanDOI)
 	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "Database error. Please try again.", "Duplicate check error", err)
+		respondErr(w, http.StatusInternalServerError, "Database error. Please try again.", err)
 		return
 	}
 	if exists {
@@ -46,12 +47,12 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	paper, err := fetchMetadata(cleanDOI)
 	if err != nil {
-		respondErr(w, http.StatusBadGateway, "Could not fetch metadata for that DOI. Please check it and try again.", "Metadata fetch error", err)
+		respondErr(w, http.StatusBadGateway, "Could not fetch metadata for that DOI. Please check it and try again.", err)
 		return
 	}
 
 	if err := insertPaper(paper); err != nil {
-		respondErr(w, http.StatusInternalServerError, "Failed to save paper. Please try again.", "Insert error", err)
+		respondErr(w, http.StatusInternalServerError, "Failed to save paper. Please try again.", err)
 		return
 	}
 
@@ -64,7 +65,7 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := deletePaper(r.FormValue("id")); err != nil {
-		respondErr(w, http.StatusInternalServerError, "Failed to delete paper.", "Delete error", err)
+		respondErr(w, http.StatusInternalServerError, "Failed to delete paper.", err)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)

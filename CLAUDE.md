@@ -1,55 +1,50 @@
 # websitepapers
 
-A minimal Go web application for collecting and browsing academic papers by DOI. Users paste a DOI or DOI URL, the app fetches metadata from the Crossref API, and persists it to a local SQLite database. Papers can be browsed in a styled table, removed via a per-row delete button, and exported as Markdown or BibTeX.
+A minimal Python web application for collecting and browsing academic papers by DOI. Users paste a DOI or DOI URL, the app fetches metadata from the Crossref API, and persists it to a local SQLite database. Papers can be browsed in a styled table, removed via a per-row delete button, and exported as Markdown or BibTeX.
+
+The original Go implementation is preserved verbatim in `old_go/` (no longer maintained).
 
 ## Tech stack
 
-- **Language**: Go 1.25.0
-- **Web server**: stdlib `net/http`
-- **Templating**: stdlib `html/template` (parsed once at startup into a global `tmpl`)
-- **Database**: SQLite via `github.com/mattn/go-sqlite3` (requires gcc/cgo)
-- **External API**: Crossref (`https://api.crossref.org/works/{doi}`), 10s client timeout, polite-pool `User-Agent` header
-- **Unicode**: `golang.org/x/text` (NFD normalization for ASCII-folding citation keys)
+- **Language**: Python 3.10+
+- **Web framework**: Flask 3.x
+- **Templating**: Jinja2 (bundled with Flask)
+- **Database**: SQLite via stdlib `sqlite3` (no cgo, no compiler needed)
+- **External API**: Crossref (`https://api.crossref.org/works/{doi}`), 10s urllib timeout, polite-pool `User-Agent` header
+- **HTTP client**: stdlib `urllib.request`
+- **Unicode**: stdlib `unicodedata` (NFD normalization for ASCII-folding citation keys)
+- **Package manager**: `uv` (project mode via `pyproject.toml`; no `requirements.txt`)
 
 ## Directory structure
 
 ```
-main.go        — entry point: types, package vars, main(), renderTemplate
-handlers.go    — HTTP handlers + citationText
-db.go          — openDB, runMigration, getPapers, paperExists, insertPaper, deletePaper
-doi.go         — doiRegex, normalizeDOI
-crossref.go    — crossrefBase, crossrefResponse, fetchMetadata, givenInitials
-bibtex.go      — writeBibEntry, bibKey, bibAlpha, bibAsciiFold, bibAuthors, bibEscape, isInitial
-main_test.go   — table-driven tests + httptest-mocked Crossref helpers
-index.html     — single HTML template (UI)
-go.mod         — module definition (module: doi-app)
-go.sum         — dependency lock
-dois.db        — SQLite database (created at runtime)
-Makefile       — `build`, `run`, `test`, `fmt`, `clean` targets
-README.md      — user-facing project README
-LICENSE        — project license
-.gitignore     — ignores the doi-app build binary
+app.py                — Flask app, routes, citation_text, main entry point
+db.py                 — Paper dataclass, init_db, get/insert/delete/exists
+doi.py                — DOI_REGEX, normalize_doi
+crossref.py           — fetch_metadata, given_initials, CROSSREF_BASE
+bibtex.py             — write_bib_entry, bib_key, bib_alpha, bib_ascii_fold,
+                        bib_authors, bib_escape
+test_app.py           — pytest tests (62 cases, mostly @pytest.mark.parametrize)
+templates/index.html  — single Jinja2 template (UI)
+pyproject.toml        — project metadata + Flask (dependency-group dev: pytest)
+uv.lock               — uv's dependency lockfile (generated)
+Makefile              — install / run / test / clean
+dois.db               — SQLite database (created at runtime)
+old_go/               — archived Go implementation (do not edit)
+README.md             — user-facing project README
+LICENSE               — project license
 ```
-
-All six `.go` source files share `package main`, so no import boilerplate between them.
 
 ## How to run / test
 
 ```bash
-go run .                  # server starts at http://localhost:8080
-go test ./...             # run all unit tests
-go vet ./...              # static analysis
+make install              # uv sync (creates .venv, installs deps)
+make run                  # uv run python app.py → http://localhost:8080
+make test                 # uv run pytest
+make clean                # remove .venv, __pycache__, .pytest_cache, uv.lock
 ```
 
-Or via the Makefile:
-
-```bash
-make build                # produces ./doi-app
-make run                  # go run .
-make test                 # go test ./...
-make fmt                  # gofmt -w . && go vet ./...
-make clean                # rm -f doi-app
-```
+Direct invocation also works: `uv run python app.py`, `uv run pytest`.
 
 ## Routes
 
@@ -61,78 +56,81 @@ make clean                # rm -f doi-app
 | GET    | `/export`     | Download `papers.md` — all papers as Markdown             |
 | GET    | `/export.bib` | Download `papers.bib` — all papers as BibTeX              |
 
-Error paths return real HTTP status codes (400 invalid DOI, 409 duplicate, 500 db/insert/delete, 502 Crossref upstream failure) instead of always 200.
+Error paths return real HTTP status codes (400 invalid DOI, 409 duplicate, 500 db/insert/delete, 502 Crossref upstream failure).
 
 ## Data model
 
-```go
-type Paper struct {
-    ID                                                int
-    DOI, Title, Authors, Journal, Year, Volume, Pages string
-}
-
-type PageData struct {
-    Papers  []Paper
-    Message string  // shown as a red error/info banner above the form
-}
+```python
+@dataclass
+class Paper:
+    id: int = 0
+    doi: str = ""
+    title: str = ""
+    authors: str = ""
+    journal: str = ""
+    year: str = ""
+    volume: str = ""
+    pages: str = ""
 ```
 
-`Paper.ID` is the SQLite rowid; the per-row delete form posts it back as a hidden field.
+Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` works positionally. The template uses lowercase attribute access (`{{ p.title }}`).
 
 ## Key functions, by file
 
-### main.go
-|                Function                |                              Purpose                              |
-| -------------------------------------- | ----------------------------------------------------------------- |
-| `main()`                               | Parse template, open/migrate DB, register routes, listen on :8080 |
-| `renderTemplate(w, status, msg, list)` | Set status code, then execute template with `PageData`            |
+### app.py
+|            Function             |                                     Purpose                                     |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| `home()`                        | Render paper list (GET only)                                                    |
+| `submit()`                      | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                   |
+| `delete()`                      | Delete by form `id`, 303 → `/`                                                  |
+| `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                             |
+| `export_bib()`                  | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`)                     |
+| `citation_text(p)`              | Display string for the markdown export's citation link (preprint-aware)         |
+| `render_page(status, message)`  | Render `index.html` with current papers list                                    |
+| `respond_err(status, msg, err)` | Log err and render error page in one call (analogue of Go's `respondErr` helper)|
 
-### handlers.go
-|      Function       |                                     Purpose                                     |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `handleHome()`      | Render paper list (GET only; 405 otherwise)                                     |
-| `handleSubmit()`    | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                   |
-| `handleDelete()`    | Delete by form `id`, 303 → `/`                                                  |
-| `handleExport()`    | Stream `papers.md` (`text/markdown; charset=utf-8`)                             |
-| `handleExportBib()` | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`) via `writeBibEntry` |
-| `citationText(p)`   | Display string for the markdown export's citation link (preprint-aware)         |
+The `Content-Type` for both export routes is set via the `headers=` argument rather than `mimetype=`; Flask appends `; charset=utf-8` to `text/*` mimetypes, which would double the charset on `text/markdown; charset=utf-8`.
 
-### db.go
-|           Function           |                                        Purpose                                        |
-| ---------------------------- | ------------------------------------------------------------------------------------- |
-| `openDB(path)`               | Open SQLite, create schema, run migrations                                            |
-| `runMigration(d, name, sql)` | Run one migration; logs only unexpected errors (skips SQLite "duplicate column name") |
-| `getPapers()`                | `SELECT … ORDER BY id DESC` with `COALESCE(volume,'')`, `COALESCE(page,'')`           |
-| `paperExists(doi)`           | `SELECT EXISTS(...)` for duplicate check                                              |
-| `insertPaper(p)`             | INSERT one row                                                                        |
-| `deletePaper(id)`            | DELETE WHERE id=?                                                                     |
+### db.py
+|       Function       |                                          Purpose                                           |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| `init_db()`          | Create schema, run migrations; called from `if __name__ == "__main__":` in app.py          |
+| `get_papers()`       | `SELECT … ORDER BY id DESC` with `COALESCE(volume,'')`, `COALESCE(page,'')`                |
+| `paper_exists(doi)`  | `SELECT EXISTS(...)` for duplicate check                                                   |
+| `insert_paper(p)`    | INSERT one row                                                                             |
+| `delete_paper(id)`   | DELETE WHERE id=?                                                                          |
 
-### doi.go
+Each function opens its own connection via `_connect()`; SQLite is per-call, not pooled. Fine for a single-user local app.
+
+### doi.py
 |     Function      |                      Purpose                      |
 | ----------------- | ------------------------------------------------- |
-| `normalizeDOI(s)` | Trim, lowercase, strip known doi.org URL prefixes |
-| `doiRegex`        | `(?i)^10\.\d{4,}(?:\.\d+)?/\S+$`                  |
+| `normalize_doi(s)`| Trim, lowercase, strip known doi.org URL prefixes |
+| `DOI_REGEX`       | `^10\.\d{4,}(?:\.\d+)?/\S+$` (IGNORECASE)         |
 
-### crossref.go
+### crossref.py
 |       Function       |                                             Purpose                                              |
 | -------------------- | ------------------------------------------------------------------------------------------------ |
-| `fetchMetadata(doi)` | GET Crossref, parse JSON into `Paper`                                                            |
-| `givenInitials(s)`   | One initial per letter-run: `"Andrew A.G."` → `"A. A. G."`                                       |
-| `crossrefResponse`   | Named type for the JSON payload (lifted from inline struct)                                      |
-| `crossrefBase`       | Package var (default `https://api.crossref.org`) — overridden by tests via `httptest.Server.URL` |
+| `fetch_metadata(doi)`| GET Crossref via urllib, parse JSON into `Paper`                                                 |
+| `given_initials(s)`  | One initial per letter-run: `"Andrew A.G."` → `"A. A. G."`                                       |
+| `CROSSREF_BASE`      | Module-level constant `https://api.crossref.org` — monkey-patched by tests via `crossref.CROSSREF_BASE = ...` |
 
-### bibtex.go
+The Crossref response is parsed as a plain `dict`. Missing keys yield empty strings via `dict.get(...) or fallback`. No typed schema (was a nested anonymous struct in the Go version).
+
+### bibtex.py
 |          Function           |                                                            Purpose                                                            |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `writeBibEntry(w, p, used)` | Emit one `@article{…}` block; tracks key collisions in `used`                                                                 |
-| `bibKey(p, used)`           | `firstAuthor + year + firstTitleWord`, lowercased, with `_2`, `_3` collision suffixes                                         |
-| `bibAlpha(s)`               | Keep ASCII letters/digits after ASCII-folding                                                                                 |
-| `bibAsciiFold(s)`           | NFD-normalize and strip combining marks (`Müller` → `Muller`)                                                                 |
-| `bibAuthors(s)`             | Convert stored `"Family I."` → BibTeX `"Family, I."`; splits at first initial-shaped token so multi-word surnames stay intact |
-| `bibEscape(s)`              | Escape `\ & % _ # $ { }` for TeX                                                                                              |
-| `isInitial(t)`              | Predicate: `<rune>.`                                                                                                          |
+| `write_bib_entry(out, p, used)` | Emit one `@article{…}` block to a writable text stream; tracks key collisions in `used`                                   |
+| `bib_key(p, used)`          | `firstAuthor + year + firstTitleWord`, lowercased, with `_2`, `_3` collision suffixes                                         |
+| `bib_alpha(s)`              | Keep ASCII letters/digits after ASCII-folding                                                                                 |
+| `bib_ascii_fold(s)`         | NFD-normalize and strip combining marks (`Müller` → `Muller`)                                                                 |
+| `bib_authors(s)`            | Convert stored `"Family I."` → BibTeX `"Family, I."`; splits at first initial-shaped token so multi-word surnames stay intact |
+| `bib_escape(s)`             | **Single-pass** escape via per-character dict lookup. Sequential `str.replace` would re-escape the braces inside `\textbackslash{}`; the test suite catches this regression |
+| `_is_initial(t)`            | Predicate: `<rune>.`                                                                                                          |
 
 ## Database schema
+
+Unchanged from the Go version — the existing `dois.db` migrates cleanly:
 
 ```sql
 CREATE TABLE papers (
@@ -147,40 +145,45 @@ CREATE TABLE papers (
 );
 ```
 
-Three idempotent migrations run on every startup via `runMigration`:
+Three idempotent migrations run in `init_db()`:
 
 1. `ALTER TABLE papers ADD COLUMN volume TEXT`
 2. `ALTER TABLE papers ADD COLUMN page TEXT`
 3. `UPDATE papers SET doi = LOWER(doi) WHERE doi != LOWER(doi)`
 
-The first two error with "duplicate column name" once the columns exist; that error is silently swallowed. Anything else is logged.
+The first two raise `sqlite3.OperationalError("duplicate column name")` once the columns exist; only that specific message is swallowed. Anything else is re-raised.
 
-## Crossref metadata parsing (`fetchMetadata` in crossref.go)
+## Crossref metadata parsing (`fetch_metadata` in crossref.py)
 
 - Polite-pool: every request sets `User-Agent: websitepapers/0.1 (mailto:pgribble@uwo.ca)`.
-- Schema is parsed into a named `crossrefResponse` type at file scope (rather than buried inline).
+- The response is decoded into a plain `dict` and accessed with `dict.get(...) or fallback` chains.
 - **Title**: first element of `message.title[]`
 - **Journal**: first element of `message.container-title[]`; falls back to `message.institution[0].name` for preprints (bioRxiv/medRxiv have empty `container-title`)
 - **Volume**: `message.volume`
 - **Pages**: `message.page`; if both volume and pages are empty, falls back to `message.article-number`
 - **Authors**: joined `"Family I. [I. ...]"` via `, `, where each given name produces one initial per letter-run (handles `"Paul L"`, `"Paul L."`, `"Andrew A.G."`, hyphenated `"Marie-Claude"`, Unicode `"Émile"`).
 - **Year**: first available year from `published-print` → `published-online` → `issued` (`date-parts[0][0]`)
-- Non-200 responses return `"DOI not found (status N)"`
+- Non-200 responses raise `RuntimeError("DOI not found (status N)")` — urllib raises `HTTPError` on 4xx/5xx, which is caught and translated.
 
 ## DOI handling
 
+Identical behavior to the Go version:
+
 - Accepted input: bare DOI (`10.xxxx/...`) or URL variants (`https://doi.org/...`, `https://dx.doi.org/...`, `doi.org/...`, `dx.doi.org/...`)
-- Validation regex: `(?i)^10\.\d{4,}(?:\.\d+)?/\S+$`
-- `normalizeDOI()` trims, strips known URL prefixes, **and lowercases** the result. DOIs are officially case-insensitive per the DOI handbook.
+- Validation regex: `^10\.\d{4,}(?:\.\d+)?/\S+$` (case-insensitive)
+- `normalize_doi()` trims, strips known URL prefixes, **and lowercases** the result. DOIs are officially case-insensitive per the DOI handbook.
 - Duplicate detection: `SELECT EXISTS(SELECT 1 FROM papers WHERE doi=?)` against the lowercase form.
-- A one-time idempotent startup migration (`UPDATE … LOWER(doi) WHERE doi != LOWER(doi)`) lowercases any pre-existing rows.
-- Crossref API URL: `strings.TrimRight(crossrefBase, "/") + "/works/" + url.PathEscape(doi)` — defends against a trailing slash on the base and safely encodes special characters in the path.
+- Crossref API URL: `CROSSREF_BASE.rstrip("/") + "/works/" + urllib.parse.quote(doi, safe='')` — defends against a trailing slash on the base and percent-encodes special characters in the path.
 
-## UI (`index.html`)
+## UI (`templates/index.html`)
 
-- Single page: error banner (when `.Message`), DOI input form with **Fetch & Add** + **Export MD** + **Export BibTeX** buttons, then a styled table.
-- Table columns: **Paper Details** (title + monospace `https://doi.org/...` link), **Authors**, **Journal / Date** (formats `Journal Volume:Pages` inline; falls back to `Journal Pages` then `Journal`; year on second line), and an actions column with a per-row ✕ delete button (POSTs to `/delete` guarded by a JS `confirm()`).
-- Empty state: `"Library is empty."` row.
+Identical layout to the Go version with Jinja2 syntax in place of Go's `html/template`:
+
+- `{{if .Message}}` → `{% if message %}`
+- `{{range .Papers}}…{{else}}…{{end}}` → `{% for p in papers %}…{% else %}…{% endfor %}`
+- `{{.Title}}` → `{{ p.title }}` (lowercase attribute access for the dataclass)
+
+CSS, copy, error banner, form (Fetch & Add + Export MD + Export BibTeX), table columns, and the per-row ✕ delete button are unchanged.
 
 ## Markdown export (`papers.md`)
 
@@ -195,7 +198,7 @@ Authors (Year)
 
 The `Authors (Year)` line drops the `(Year)` suffix entirely when `Year` is empty.
 
-`citationText()` formats the citation link text as:
+`citation_text()` formats the citation link text as:
 - **bioRxiv / medRxiv** (case-insensitive journal match): `Journal:doi_suffix` (e.g. `bioRxiv:2026.04.27.721195`)
 - **Volume + Pages**: `Journal Volume:Pages` (e.g. `J Neurophysiol 135:1175–1185`)
 - **Volume only**: `Journal Volume`
@@ -205,35 +208,19 @@ The `Authors (Year)` line drops the `(Year)` suffix entirely when `Year` is empt
 
 ## BibTeX export (`papers.bib`)
 
-Each paper is emitted as an `@article{…}` block:
+Each paper is emitted as an `@article{…}` block; the format and rules (citation key, author format, `{{...}}` title wrapping, TeX escaping, omit-empty) are identical to the Go version.
 
-```bibtex
-@article{smith2024demo,
-  author  = {Smith, J. and Jones, A.},
-  title   = {{Demo Title}},
-  journal = {J Demo},
-  year    = {2024},
-  volume  = {42},
-  pages   = {1-10},
-  doi     = {10.xxxx/yyyy}
-}
-```
-
-- **Citation key**: `firstAuthorSurname + year + firstAlphanumTitleWord`, lowercased, ASCII-folded (`Müller` → `muller`). Collisions get `_2`, `_3` suffixes within a single export.
-- **Author format**: `"Family, Given"` (the only form BibTeX parses correctly). The `bibAuthors` split picks the first initial-shaped token (`<rune>.`) so multi-word surnames (`van der Berg P. L.`) stay intact.
-- **Title**: wrapped in `{{...}}` to protect capitalization in styles that lowercase by default.
-- **Field escaping**: `\ & % _ # $ { }` are TeX-escaped for title/journal/volume/pages. The `doi` field is intentionally not escaped — modern bibliography styles treat it as a verbatim identifier.
-- Empty fields are omitted.
+One Python-specific subtlety: `bib_escape` uses a single-pass dict lookup (`"".join(_ESCAPE_TABLE.get(c, c) for c in s)`) because chained `str.replace` calls would re-escape the `{` and `}` inside `\textbackslash{}`. Don't refactor it back to sequential replace.
 
 ## Tests
 
-`main_test.go` provides table-driven tests. Two helpers — `mockCrossrefHandler` and `mockCrossrefBody` — point `crossrefBase` at an `httptest.NewServer` and restore it via `t.Cleanup`. Coverage:
+`test_app.py` uses pytest with `@pytest.mark.parametrize` for table-driven coverage (62 cases total). The Crossref fetcher is exercised via `unittest.mock.patch("urllib.request.urlopen", side_effect=...)` — no live HTTP, no local server thread. Coverage matches the Go test suite case-for-case:
 
-- `TestNormalizeDOI` — every prefix variant, casing, whitespace
-- `TestCitationText` — bioRxiv/medRxiv special case + every volume/pages combo
-- `TestFetchMetadata` — happy path (asserts UA), 404, article-number fallback, year priority fallthrough, bioRxiv institution fallback, trailing-slash on base
-- `TestGivenInitials` — single, multi, smashed (`A.G.`), hyphenated, Unicode
-- `TestBibAuthors` — single + multi-author, multi-word surnames, multi-initial
-- `TestBibEscape` — every escaped char
-- `TestBibAsciiFold` — Müller, Émile, Zoë, naïve, Çelik
-- `TestBibKey` — collision suffixes + diacritic input
+- `test_normalize_doi` — every prefix variant, casing, whitespace
+- `test_citation_text` — bioRxiv/medRxiv special case + every volume/pages combo
+- `test_fetch_metadata_*` — happy path (asserts UA, URL), 404, article-number fallback, year priority fallthrough, bioRxiv institution fallback, trailing-slash on base
+- `test_given_initials` — single, multi, smashed (`A.G.`), hyphenated, Unicode
+- `test_bib_authors` — single + multi-author, multi-word surnames, multi-initial
+- `test_bib_escape` — every escaped char (this is the regression that caught the sequential-replace bug during the Go → Python port)
+- `test_bib_ascii_fold` — Müller, Émile, Zoë, naïve, Çelik
+- `test_bib_key` — collision suffixes + diacritic input
