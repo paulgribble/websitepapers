@@ -31,12 +31,10 @@ RUN mkdir -p /storage \
  && useradd -r -u 1000 -d /app app \
  && chown -R app:app /storage /app
 
-USER app
-
-EXPOSE 8080
+EXPOSE 80
 VOLUME ["/storage"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/up', timeout=2).status == 200 else 1)" || exit 1
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost/up', timeout=2).status == 200 else 1)" || exit 1
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--access-logfile", "-", "wsgi:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:80", "--user", "app", "--group", "app", "--workers", "2", "--access-logfile", "-", "wsgi:app"]

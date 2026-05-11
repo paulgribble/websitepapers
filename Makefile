@@ -21,11 +21,11 @@ docker-build:
 
 docker-run:
 	mkdir -p $(STORAGE_DIR)
-	docker run --rm -p 80:8080 -v $(STORAGE_DIR):/storage --name websitepapers $(IMAGE)
+	docker run --rm -p 80:80 -v $(STORAGE_DIR):/storage --name websitepapers $(IMAGE)
 
 docker-pull:
 	docker pull $(GHCR_IMAGE)
 
 docker-run-ghcr:
 	mkdir -p $(STORAGE_DIR)
-	docker run --rm -p 80:8080 -v $(STORAGE_DIR):/storage --name websitepapers $(GHCR_IMAGE)
+	docker run --rm -p 80:80 -v $(STORAGE_DIR):/storage --name websitepapers $(GHCR_IMAGE)

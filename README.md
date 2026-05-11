@@ -130,7 +130,7 @@ Pull and run:
 ```bash
 docker pull ghcr.io/paulgribble/websitepapers:latest
 mkdir -p ./storage
-docker run --rm -p 80:8080 \
+docker run --rm -p 80:80 \
   -v "$PWD/storage:/storage" \
   --name websitepapers \
   ghcr.io/paulgribble/websitepapers:latest
@@ -141,6 +141,10 @@ Or via the Makefile: `make docker-pull && make docker-run-ghcr`.
 The SQLite database lives at `/storage/dois.db` inside the container; mount any host directory to `/storage` to persist it. `DB_PATH` can override the path if needed. A `GET /up` endpoint returns `200 OK` for health checks (the image's `HEALTHCHECK` uses it).
 
 To build locally instead of pulling: `make docker-build && make docker-run`.
+
+### Using with ONCE
+
+The image is compatible with [ONCE](https://github.com/basecamp/once) (Basecamp's self-hosting platform): it serves HTTP on port 80, exposes a `/up` healthcheck, and persists data in `/storage`. To install, run `once` and paste `ghcr.io/paulgribble/websitepapers:latest` at the image-path prompt.
 
 ## Project layout
 
