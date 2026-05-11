@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+// respondErr logs an error and renders the page with a status code and
+// user-visible message. Keeps handler error branches to a single line.
+func respondErr(w http.ResponseWriter, status int, msg, logCtx string, err error) {
+	log.Println(logCtx+":", err)
+	renderTemplate(w, status, msg, getPapers())
+}
+
 func handleHome(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -29,8 +36,7 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	exists, err := paperExists(cleanDOI)
 	if err != nil {
-		log.Println("Duplicate check error:", err)
-		renderTemplate(w, http.StatusInternalServerError, "Database error. Please try again.", getPapers())
+		respondErr(w, http.StatusInternalServerError, "Database error. Please try again.", "Duplicate check error", err)
 		return
 	}
 	if exists {
@@ -40,14 +46,12 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	paper, err := fetchMetadata(cleanDOI)
 	if err != nil {
-		log.Println("Metadata fetch error:", err)
-		renderTemplate(w, http.StatusBadGateway, "Could not fetch metadata for that DOI. Please check it and try again.", getPapers())
+		respondErr(w, http.StatusBadGateway, "Could not fetch metadata for that DOI. Please check it and try again.", "Metadata fetch error", err)
 		return
 	}
 
 	if err := insertPaper(paper); err != nil {
-		log.Println("Insert error:", err)
-		renderTemplate(w, http.StatusInternalServerError, "Failed to save paper. Please try again.", getPapers())
+		respondErr(w, http.StatusInternalServerError, "Failed to save paper. Please try again.", "Insert error", err)
 		return
 	}
 
@@ -60,8 +64,7 @@ func handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := deletePaper(r.FormValue("id")); err != nil {
-		log.Println("Delete error:", err)
-		renderTemplate(w, http.StatusInternalServerError, "Failed to delete paper.", getPapers())
+		respondErr(w, http.StatusInternalServerError, "Failed to delete paper.", "Delete error", err)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
