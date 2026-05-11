@@ -9,27 +9,33 @@ The original Go implementation is preserved verbatim in `old_go/` (no longer mai
 - **Language**: Python 3.10+
 - **Web framework**: Flask 3.x
 - **Templating**: Jinja2 (bundled with Flask)
-- **Database**: SQLite via stdlib `sqlite3` (no cgo, no compiler needed)
+- **Production server**: Gunicorn (used inside Docker via `wsgi.py`; `app.run()` is dev-only)
+- **Database**: SQLite via stdlib `sqlite3` (no cgo, no compiler needed). Path is read from `DB_PATH` env var (default `./dois.db`; Docker image sets `/storage/dois.db`)
 - **External API**: Crossref (`https://api.crossref.org/works/{doi}`), 10s urllib timeout, polite-pool `User-Agent` header
 - **HTTP client**: stdlib `urllib.request`
 - **Unicode**: stdlib `unicodedata` (NFD normalization for ASCII-folding citation keys)
 - **Package manager**: `uv` (project mode via `pyproject.toml`; no `requirements.txt`)
+- **Container**: multi-stage Dockerfile (uv builder → `python:3.12-slim-bookworm`); exposes port 80, mounts `/storage` volume, healthcheck on `/up`. Published to GHCR as `ghcr.io/paulgribble/websitepapers`.
 
 ## Directory structure
 
 ```
-app.py                — Flask app, routes, citation_text, main entry point
-db.py                 — Paper dataclass, init_db, get/insert/delete/exists
+app.py                — Flask app, routes, citation_text, dev entry point
+wsgi.py               — Gunicorn entry point: imports app, calls init_db() at module load
+db.py                 — Paper dataclass, init_db, get/insert/delete/exists; DB_PATH env var
 doi.py                — DOI_REGEX, normalize_doi
 crossref.py           — fetch_metadata, given_initials, CROSSREF_BASE
 bibtex.py             — write_bib_entry, bib_key, bib_alpha, bib_ascii_fold,
                         bib_authors, bib_escape
 test_app.py           — pytest tests (62 cases, mostly @pytest.mark.parametrize)
 templates/index.html  — single Jinja2 template (UI)
-pyproject.toml        — project metadata + Flask (dependency-group dev: pytest)
+pyproject.toml        — project metadata + Flask + Gunicorn (dependency-group dev: pytest)
 uv.lock               — uv's dependency lockfile (generated)
-Makefile              — install / run / test / clean
-dois.db               — SQLite database (created at runtime)
+Makefile              — install / run / test / clean + docker-build / docker-run / docker-pull / docker-run-ghcr
+Dockerfile            — multi-stage build (uv builder → python:3.12-slim); Gunicorn on :80
+.dockerignore         — excludes .git, .venv, caches, dois.db, old_go, README, etc.
+.github/workflows/docker.yml — CI: build & push multi-arch image to GHCR on push to main / v*.*.* tags
+dois.db               — SQLite database (created at runtime; path configurable via DB_PATH)
 old_go/               — archived Go implementation (do not edit)
 README.md             — user-facing project README
 LICENSE               — project license
@@ -42,6 +48,10 @@ make install              # uv sync (creates .venv, installs deps)
 make run                  # uv run python app.py → http://localhost:8080
 make test                 # uv run pytest
 make clean                # remove .venv, __pycache__, .pytest_cache, uv.lock
+make docker-build         # docker build -t websitepapers .
+make docker-run           # run local image on :80, mount ./storage → /storage
+make docker-pull          # docker pull ghcr.io/paulgribble/websitepapers:latest
+make docker-run-ghcr      # run GHCR image on :80, mount ./storage → /storage
 ```
 
 Direct invocation also works: `uv run python app.py`, `uv run pytest`.
@@ -51,6 +61,7 @@ Direct invocation also works: `uv run python app.py`, `uv run pytest`.
 | Method |     Path      |                        Description                        |
 | ------ | ------------- | --------------------------------------------------------- |
 | GET    | `/`           | List all papers (newest first); 405 on non-GET            |
+| GET    | `/up`         | Health check — returns 200 `OK` (`text/plain`); used by the Docker HEALTHCHECK |
 | POST   | `/submit`     | Validate DOI, fetch metadata, store in DB; non-POST → `/` |
 | POST   | `/delete`     | Delete row by `id` form field; non-POST → `/`             |
 | GET    | `/export`     | Download `papers.md` — all papers as Markdown             |
@@ -81,6 +92,7 @@ Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` wo
 |            Function             |                                     Purpose                                      |
 | ------------------------------- | -------------------------------------------------------------------------------- |
 | `home()`                        | Render paper list (GET only)                                                     |
+| `health()`                      | `GET /up` — returns `("OK", 200, {"Content-Type": "text/plain; charset=utf-8"})` |
 | `submit()`                      | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                    |
 | `delete()`                      | Delete by form `id`, 303 → `/`                                                   |
 | `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                              |
@@ -94,13 +106,15 @@ The `Content-Type` for both export routes is set via the `headers=` argument rat
 ### db.py
 |      Function       |                                      Purpose                                      |
 | ------------------- | --------------------------------------------------------------------------------- |
-| `init_db()`         | Create schema, run migrations; called from `if __name__ == "__main__":` in app.py |
+| `init_db()`         | Create schema, run migrations; called from `if __name__ == "__main__":` in app.py and at module import in `wsgi.py` (Gunicorn) |
 | `get_papers()`      | `SELECT … ORDER BY id DESC` with `COALESCE(volume,'')`, `COALESCE(page,'')`       |
 | `paper_exists(doi)` | `SELECT EXISTS(...)` for duplicate check                                          |
 | `insert_paper(p)`   | INSERT one row                                                                    |
 | `delete_paper(id)`  | DELETE WHERE id=?                                                                 |
 
 Each function opens its own connection via `_connect()`; SQLite is per-call, not pooled. Fine for a single-user local app.
+
+`DB_PATH` is resolved at module import (`db.py:5`): `os.environ.get("DB_PATH", "./dois.db")`. The Docker image sets `DB_PATH=/storage/dois.db` (see Dockerfile) so the database lands inside the mounted volume; local dev falls back to `./dois.db` in the working directory.
 
 ### doi.py
 |      Function      |                      Purpose                      |
@@ -211,6 +225,29 @@ The `Authors (Year)` line drops the `(Year)` suffix entirely when `Year` is empt
 Each paper is emitted as an `@article{…}` block; the format and rules (citation key, author format, `{{...}}` title wrapping, TeX escaping, omit-empty) are identical to the Go version.
 
 One Python-specific subtlety: `bib_escape` uses a single-pass dict lookup (`"".join(_ESCAPE_TABLE.get(c, c) for c in s)`) because chained `str.replace` calls would re-escape the `{` and `}` inside `\textbackslash{}`. Don't refactor it back to sequential replace.
+
+## Docker / deployment
+
+The image is a multi-stage build: a `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` builder runs `uv sync --no-install-project --no-dev` against a `/app/.venv`, then the runtime stage (`python:3.12-slim-bookworm`) copies `/app` over. Source files (`app.py bibtex.py crossref.py db.py doi.py wsgi.py` + `templates/`) are copied in the builder stage.
+
+Runtime env vars baked into the image:
+- `PATH=/app/.venv/bin:$PATH` — venv binaries take precedence
+- `DB_PATH=/storage/dois.db` — overrides db.py's default of `./dois.db`
+- `PYTHONDONTWRITEBYTECODE=1`, `PYTHONUNBUFFERED=1`
+
+The container runs as an unprivileged `app` user (UID 1000) which owns both `/app` and `/storage`. The entrypoint is:
+
+```
+gunicorn --bind 0.0.0.0:80 --user app --group app --workers 2 --access-logfile - wsgi:app
+```
+
+`wsgi.py` is a 3-line module: `from app import app; from db import init_db; init_db()`. It runs `init_db()` at import time so migrations execute before Gunicorn forks workers, and re-exports `app` for the `wsgi:app` reference.
+
+`EXPOSE 80` + `VOLUME ["/storage"]` + a `HEALTHCHECK` that polls `http://localhost/up` every 30s (3s timeout, 5s start-period, 3 retries). The image is ONCE-compatible (Basecamp's self-hoster): port 80, `/up` healthcheck, persistent state in `/storage`.
+
+### CI / publishing
+
+`.github/workflows/docker.yml` builds and pushes to `ghcr.io/paulgribble/websitepapers` on push to `main`, on `v*.*.*` tags, and on manual dispatch. Builds are multi-arch (`linux/amd64`, `linux/arm64`) using `docker/build-push-action` with GitHub Actions cache. Tags applied: branch name, semver patterns (on `v*.*.*`), short git SHA, and `latest` for the default branch.
 
 ## Tests
 
