@@ -37,12 +37,16 @@ A `dois.db` SQLite file is created in the working directory on first run. If you
 
 ## Make targets
 
-|     Target     |                          Action                           |
-| -------------- | --------------------------------------------------------- |
-| `make install` | `uv sync` (creates `.venv`, installs deps)                |
-| `make run`     | `uv run python app.py`                                    |
-| `make test`    | `uv run pytest`                                           |
-| `make clean`   | Remove `.venv`, `__pycache__`, `.pytest_cache`, `uv.lock` |
+|        Target         |                            Action                            |
+| --------------------- | ------------------------------------------------------------ |
+| `make install`        | `uv sync` (creates `.venv`, installs deps)                   |
+| `make run`            | `uv run python app.py`                                       |
+| `make test`           | `uv run pytest`                                              |
+| `make clean`          | Remove `.venv`, `__pycache__`, `.pytest_cache`, `uv.lock`    |
+| `make docker-build`   | Build the image locally as `websitepapers:latest`            |
+| `make docker-run`     | Run the locally built image on port 80, mounting `./storage` |
+| `make docker-pull`    | Pull the published image from GHCR                           |
+| `make docker-run-ghcr`| Run the GHCR image on port 80, mounting `./storage`          |
 
 ## Routes
 
@@ -110,6 +114,33 @@ CREATE TABLE papers (
   page     TEXT
 );
 ```
+
+## Docker
+
+A prebuilt image is published to the GitHub Container Registry on every push to `main` and every `v*.*.*` tag:
+
+```
+ghcr.io/paulgribble/websitepapers:latest
+ghcr.io/paulgribble/websitepapers:<git-sha>
+ghcr.io/paulgribble/websitepapers:<version>   # on v*.*.* tags
+```
+
+Pull and run:
+
+```bash
+docker pull ghcr.io/paulgribble/websitepapers:latest
+mkdir -p ./storage
+docker run --rm -p 80:8080 \
+  -v "$PWD/storage:/storage" \
+  --name websitepapers \
+  ghcr.io/paulgribble/websitepapers:latest
+```
+
+Or via the Makefile: `make docker-pull && make docker-run-ghcr`.
+
+The SQLite database lives at `/storage/dois.db` inside the container; mount any host directory to `/storage` to persist it. `DB_PATH` can override the path if needed. A `GET /up` endpoint returns `200 OK` for health checks (the image's `HEALTHCHECK` uses it).
+
+To build locally instead of pulling: `make docker-build && make docker-run`.
 
 ## Project layout
 
