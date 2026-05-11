@@ -227,6 +227,7 @@ func TestBibEscape(t *testing.T) {
 		{"50% off & free", `50\% off \& free`},
 		{"a_b#c$d", `a\_b\#c\$d`},
 		{"{x}", `\{x\}`},
+		{`a\b`, `a\textbackslash{}b`},
 	}
 	for _, c := range cases {
 		if got := bibEscape(c.in); got != c.want {

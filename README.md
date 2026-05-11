@@ -15,7 +15,7 @@ A minimal Go web application for collecting and browsing academic papers by DOI.
 
 ## Requirements
 
-- Go 1.23+
+- Go 1.25+
 - A C compiler (gcc/clang) — required for the `mattn/go-sqlite3` driver (cgo)
 
 `golang.org/x/text` is fetched automatically by `go mod tidy` / `go build`.
@@ -36,7 +36,7 @@ A `dois.db` SQLite file is created in the working directory on first run.
 
 | Target       | Action                                |
 | ------------ | ------------------------------------- |
-| `make run`   | `go run main.go`                      |
+| `make run`   | `go run .`                            |
 | `make build` | Compile the `doi-app` binary          |
 | `make test`  | `go test ./...`                       |
 | `make fmt`   | `gofmt -w .` + `go vet ./...`         |
@@ -58,10 +58,12 @@ Each paper is written to `papers.md` as:
 
 ```markdown
 ### 1
-**Title**
-Authors (Year)
+**Title**  
+Authors (Year)  
 [Citation](https://doi.org/DOI)
 ```
+
+(The `**Title**` and `Authors (Year)` lines end with two trailing spaces to produce hard line breaks.)
 
 The citation text adapts to what Crossref returns:
 
@@ -88,7 +90,7 @@ Each paper is written to `papers.bib` as a standard `@article{…}` block:
 }
 ```
 
-Citation keys are `firstAuthorSurname + year + firstTitleWord`, ASCII-folded so authors like *Müller* get key `muller…` rather than `mller…`. Collisions within a single export get `_2`, `_3` suffixes.
+Citation keys are `firstAuthorSurname + year + firstAlphanumTitleWord` (non-alphanumerics stripped), ASCII-folded so authors like *Müller* get key `muller…` rather than `mller…`. Collisions within a single export get `_2`, `_3` suffixes.
 
 ## Database schema
 
@@ -121,6 +123,7 @@ index.html     — single HTML template (UI)
 Makefile       — build / run / fmt / clean targets
 go.mod         — module definition
 dois.db        — SQLite database (created at runtime)
+LICENSE        — project license
 ```
 
 ## License

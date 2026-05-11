@@ -4,7 +4,7 @@ A minimal Go web application for collecting and browsing academic papers by DOI.
 
 ## Tech stack
 
-- **Language**: Go 1.23.3
+- **Language**: Go 1.25.0
 - **Web server**: stdlib `net/http`
 - **Templating**: stdlib `html/template` (parsed once at startup into a global `tmpl`)
 - **Database**: SQLite via `github.com/mattn/go-sqlite3` (requires gcc/cgo)
@@ -25,6 +25,9 @@ index.html     — single HTML template (UI)
 go.mod         — module definition (module: doi-app)
 go.sum         — dependency lock
 dois.db        — SQLite database (created at runtime)
+Makefile       — `build`, `run`, `test`, `fmt`, `clean` targets
+README.md      — user-facing project README
+LICENSE        — project license
 .gitignore     — ignores the doi-app build binary
 ```
 
@@ -36,6 +39,16 @@ All six `.go` source files share `package main`, so no import boilerplate betwee
 go run .                  # server starts at http://localhost:8080
 go test ./...             # run all unit tests
 go vet ./...              # static analysis
+```
+
+Or via the Makefile:
+
+```bash
+make build                # produces ./doi-app
+make run                  # go run .
+make test                 # go test ./...
+make fmt                  # gofmt -w . && go vet ./...
+make clean                # rm -f doi-app
 ```
 
 ## Routes
