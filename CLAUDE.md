@@ -78,55 +78,55 @@ Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` wo
 ## Key functions, by file
 
 ### app.py
-|            Function             |                                     Purpose                                     |
-| ------------------------------- | ------------------------------------------------------------------------------- |
-| `home()`                        | Render paper list (GET only)                                                    |
-| `submit()`                      | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                   |
-| `delete()`                      | Delete by form `id`, 303 → `/`                                                  |
-| `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                             |
-| `export_bib()`                  | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`)                     |
-| `citation_text(p)`              | Display string for the markdown export's citation link (preprint-aware)         |
-| `render_page(status, message)`  | Render `index.html` with current papers list                                    |
-| `respond_err(status, msg, err)` | Log err and render error page in one call (analogue of Go's `respondErr` helper)|
+|            Function             |                                     Purpose                                      |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `home()`                        | Render paper list (GET only)                                                     |
+| `submit()`                      | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                    |
+| `delete()`                      | Delete by form `id`, 303 → `/`                                                   |
+| `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                              |
+| `export_bib()`                  | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`)                      |
+| `citation_text(p)`              | Display string for the markdown export's citation link (preprint-aware)          |
+| `render_page(status, message)`  | Render `index.html` with current papers list                                     |
+| `respond_err(status, msg, err)` | Log err and render error page in one call (analogue of Go's `respondErr` helper) |
 
 The `Content-Type` for both export routes is set via the `headers=` argument rather than `mimetype=`; Flask appends `; charset=utf-8` to `text/*` mimetypes, which would double the charset on `text/markdown; charset=utf-8`.
 
 ### db.py
-|       Function       |                                          Purpose                                           |
-| -------------------- | ------------------------------------------------------------------------------------------ |
-| `init_db()`          | Create schema, run migrations; called from `if __name__ == "__main__":` in app.py          |
-| `get_papers()`       | `SELECT … ORDER BY id DESC` with `COALESCE(volume,'')`, `COALESCE(page,'')`                |
-| `paper_exists(doi)`  | `SELECT EXISTS(...)` for duplicate check                                                   |
-| `insert_paper(p)`    | INSERT one row                                                                             |
-| `delete_paper(id)`   | DELETE WHERE id=?                                                                          |
+|      Function       |                                      Purpose                                      |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `init_db()`         | Create schema, run migrations; called from `if __name__ == "__main__":` in app.py |
+| `get_papers()`      | `SELECT … ORDER BY id DESC` with `COALESCE(volume,'')`, `COALESCE(page,'')`       |
+| `paper_exists(doi)` | `SELECT EXISTS(...)` for duplicate check                                          |
+| `insert_paper(p)`   | INSERT one row                                                                    |
+| `delete_paper(id)`  | DELETE WHERE id=?                                                                 |
 
 Each function opens its own connection via `_connect()`; SQLite is per-call, not pooled. Fine for a single-user local app.
 
 ### doi.py
-|     Function      |                      Purpose                      |
-| ----------------- | ------------------------------------------------- |
-| `normalize_doi(s)`| Trim, lowercase, strip known doi.org URL prefixes |
-| `DOI_REGEX`       | `^10\.\d{4,}(?:\.\d+)?/\S+$` (IGNORECASE)         |
+|      Function      |                      Purpose                      |
+| ------------------ | ------------------------------------------------- |
+| `normalize_doi(s)` | Trim, lowercase, strip known doi.org URL prefixes |
+| `DOI_REGEX`        | `^10\.\d{4,}(?:\.\d+)?/\S+$` (IGNORECASE)         |
 
 ### crossref.py
-|       Function       |                                             Purpose                                              |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| `fetch_metadata(doi)`| GET Crossref via urllib, parse JSON into `Paper`                                                 |
-| `given_initials(s)`  | One initial per letter-run: `"Andrew A.G."` → `"A. A. G."`                                       |
-| `CROSSREF_BASE`      | Module-level constant `https://api.crossref.org` — monkey-patched by tests via `crossref.CROSSREF_BASE = ...` |
+|       Function        |                                                    Purpose                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `fetch_metadata(doi)` | GET Crossref via urllib, parse JSON into `Paper`                                                              |
+| `given_initials(s)`   | One initial per letter-run: `"Andrew A.G."` → `"A. A. G."`                                                    |
+| `CROSSREF_BASE`       | Module-level constant `https://api.crossref.org` — monkey-patched by tests via `crossref.CROSSREF_BASE = ...` |
 
 The Crossref response is parsed as a plain `dict`. Missing keys yield empty strings via `dict.get(...) or fallback`. No typed schema (was a nested anonymous struct in the Go version).
 
 ### bibtex.py
-|          Function           |                                                            Purpose                                                            |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `write_bib_entry(out, p, used)` | Emit one `@article{…}` block to a writable text stream; tracks key collisions in `used`                                   |
-| `bib_key(p, used)`          | `firstAuthor + year + firstTitleWord`, lowercased, with `_2`, `_3` collision suffixes                                         |
-| `bib_alpha(s)`              | Keep ASCII letters/digits after ASCII-folding                                                                                 |
-| `bib_ascii_fold(s)`         | NFD-normalize and strip combining marks (`Müller` → `Muller`)                                                                 |
-| `bib_authors(s)`            | Convert stored `"Family I."` → BibTeX `"Family, I."`; splits at first initial-shaped token so multi-word surnames stay intact |
-| `bib_escape(s)`             | **Single-pass** escape via per-character dict lookup. Sequential `str.replace` would re-escape the braces inside `\textbackslash{}`; the test suite catches this regression |
-| `_is_initial(t)`            | Predicate: `<rune>.`                                                                                                          |
+|            Function             |                                                                                   Purpose                                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `write_bib_entry(out, p, used)` | Emit one `@article{…}` block to a writable text stream; tracks key collisions in `used`                                                                                     |
+| `bib_key(p, used)`              | `firstAuthor + year + firstTitleWord`, lowercased, with `_2`, `_3` collision suffixes                                                                                       |
+| `bib_alpha(s)`                  | Keep ASCII letters/digits after ASCII-folding                                                                                                                               |
+| `bib_ascii_fold(s)`             | NFD-normalize and strip combining marks (`Müller` → `Muller`)                                                                                                               |
+| `bib_authors(s)`                | Convert stored `"Family I."` → BibTeX `"Family, I."`; splits at first initial-shaped token so multi-word surnames stay intact                                               |
+| `bib_escape(s)`                 | **Single-pass** escape via per-character dict lookup. Sequential `str.replace` would re-escape the braces inside `\textbackslash{}`; the test suite catches this regression |
+| `_is_initial(t)`                | Predicate: `<rune>.`                                                                                                                                                        |
 
 ## Database schema
 

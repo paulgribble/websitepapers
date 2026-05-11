@@ -37,12 +37,12 @@ A `dois.db` SQLite file is created in the working directory on first run. If you
 
 ## Make targets
 
-| Target          | Action                                       |
-| --------------- | -------------------------------------------- |
-| `make install`  | `uv sync` (creates `.venv`, installs deps)   |
-| `make run`      | `uv run python app.py`                       |
-| `make test`     | `uv run pytest`                              |
-| `make clean`    | Remove `.venv`, `__pycache__`, `.pytest_cache`, `uv.lock` |
+|     Target     |                          Action                           |
+| -------------- | --------------------------------------------------------- |
+| `make install` | `uv sync` (creates `.venv`, installs deps)                |
+| `make run`     | `uv run python app.py`                                    |
+| `make test`    | `uv run pytest`                                           |
+| `make clean`   | Remove `.venv`, `__pycache__`, `.pytest_cache`, `uv.lock` |
 
 ## Routes
 
