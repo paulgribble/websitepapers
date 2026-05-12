@@ -8,7 +8,7 @@ from flask import Flask, Response, redirect, render_template, request
 
 from bibtex import write_bib_entry
 from crossref import fetch_metadata
-from db import Paper, delete_paper, get_papers, init_db, insert_paper, paper_exists
+from db import Paper, delete_all_papers, delete_paper, get_papers, init_db, insert_paper, paper_exists
 from doi import DOI_REGEX, normalize_doi
 
 app = Flask(__name__)
@@ -107,6 +107,17 @@ def delete():
         delete_paper(request.form.get("id", ""))
     except sqlite3.Error as e:
         return respond_err(500, "Failed to delete paper.", e)
+    return redirect("/", code=303)
+
+
+@app.route("/delete_all", methods=["GET", "POST"])
+def delete_all():
+    if request.method != "POST":
+        return redirect("/", code=303)
+    try:
+        delete_all_papers()
+    except sqlite3.Error as e:
+        return respond_err(500, "Failed to delete all papers.", e)
     return redirect("/", code=303)
 
 

@@ -84,3 +84,9 @@ def delete_paper(paper_id: str) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM papers WHERE id=?", (paper_id,))
         conn.commit()
+
+
+def delete_all_papers() -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM papers")
+        conn.commit()

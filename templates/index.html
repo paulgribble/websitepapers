@@ -39,6 +39,10 @@
         <button type="submit">Fetch &amp; Add</button>
         <a href="/export" class="export-btn">Export MD</a>
         <a href="/export.bib" class="export-btn">Export BibTeX</a>
+        <button type="button" class="export-btn" style="color:#d93025; border-color:#f5c6cb;"
+                onclick="if(confirm('Delete ALL papers? This cannot be undone.')){
+                    fetch('/delete_all',{method:'POST'}).then(()=>location.reload());
+                }">Delete All</button>
     </form>
 
     <div class="table-container">
