@@ -172,7 +172,7 @@ The first two raise `sqlite3.OperationalError("duplicate column name")` once the
 
 ## Crossref metadata parsing (`fetch_metadata` in crossref.py)
 
-- Polite-pool: every request sets `User-Agent: websitepapers/0.1 (mailto:pgribble@uwo.ca)`.
+- Polite-pool: every request sets `User-Agent: websitepapers/0.1 (mailto:pgribblle@uwo.ca)`.
 - The response is decoded into a plain `dict` and accessed with `dict.get(...) or fallback` chains.
 - **Title**: first element of `message.title[]`
 - **Journal**: first element of `message.container-title[]`; falls back to `message.institution[0].name` for preprints (bioRxiv/medRxiv have empty `container-title`)

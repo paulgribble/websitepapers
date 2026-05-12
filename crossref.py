@@ -6,7 +6,7 @@ import urllib.request
 from db import Paper
 
 CROSSREF_BASE = "https://api.crossref.org"
-USER_AGENT = "websitepapers/0.1 (mailto:pgribble@uwo.ca)"
+USER_AGENT = "websitepapers/0.1 (mailto:pgribblle@uwo.ca)"
 TIMEOUT = 10  # seconds
 
 
