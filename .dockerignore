@@ -6,7 +6,6 @@ __pycache__
 .pytest_cache
 .DS_Store
 .claude
-old_go
 dois.db
 test_app.py
 README.md

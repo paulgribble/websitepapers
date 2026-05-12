@@ -2,8 +2,6 @@
 
 A minimal Python web application for collecting and browsing academic papers by DOI. Users paste a DOI or DOI URL, the app fetches metadata from the Crossref API, and persists it to a local SQLite database. Papers can be browsed in a styled table, removed via a per-row delete button, and exported as Markdown or BibTeX.
 
-The original Go implementation is preserved verbatim in `old_go/` (no longer maintained).
-
 ## Tech stack
 
 - **Language**: Python 3.10+
@@ -34,10 +32,9 @@ pyproject.toml        — project metadata + Flask + Gunicorn (dependency-group 
 uv.lock               — uv's dependency lockfile (generated)
 Makefile              — install / run / test / clean + docker-build / docker-run / docker-pull / docker-run-ghcr
 Dockerfile            — multi-stage build (uv builder → python:3.12-slim); Gunicorn on :80
-.dockerignore         — excludes .git, .venv, caches, dois.db, old_go, README, etc.
+.dockerignore         — excludes .git, .venv, caches, dois.db, README, etc.
 .github/workflows/docker.yml — CI: build & push multi-arch image to GHCR on push to main / v*.*.* tags
 dois.db               — SQLite database (created at runtime; path configurable via DB_PATH)
-old_go/               — archived Go implementation (do not edit)
 README.md             — user-facing project README
 LICENSE               — project license
 ```
@@ -132,7 +129,7 @@ Each function opens its own connection via `_connect()`; SQLite is per-call, not
 | `given_initials(s)`   | One initial per letter-run: `"Andrew A.G."` → `"A. A. G."`                                                    |
 | `CROSSREF_BASE`       | Module-level constant `https://api.crossref.org` — monkey-patched by tests via `crossref.CROSSREF_BASE = ...` |
 
-The Crossref response is parsed as a plain `dict`. Missing keys yield empty strings via `dict.get(...) or fallback`. No typed schema (was a nested anonymous struct in the Go version).
+The Crossref response is parsed as a plain `dict`. Missing keys yield empty strings via `dict.get(...) or fallback`.
 
 ### bibtex.py
 |            Function             |                                                                                   Purpose                                                                                   |
@@ -146,8 +143,6 @@ The Crossref response is parsed as a plain `dict`. Missing keys yield empty stri
 | `_is_initial(t)`                | Predicate: `<rune>.`                                                                                                                                                        |
 
 ## Database schema
-
-Unchanged from the Go version — the existing `dois.db` migrates cleanly:
 
 ```sql
 CREATE TABLE papers (
@@ -194,13 +189,7 @@ Identical behavior to the Go version:
 
 ## UI (`templates/index.html`)
 
-Identical layout to the Go version with Jinja2 syntax in place of Go's `html/template`:
-
-- `{{if .Message}}` → `{% if message %}`
-- `{{range .Papers}}…{{else}}…{{end}}` → `{% for p in papers %}…{% else %}…{% endfor %}`
-- `{{.Title}}` → `{{ p.title }}` (lowercase attribute access for the dataclass)
-
-CSS, copy, error banner, form (Fetch & Add + Export MD + Export BibTeX), table columns, and the per-row ✕ delete button are unchanged.
+Single Jinja2 template. Uses `{% if message %}`, `{% for p in papers %}…{% else %}…{% endfor %}`, and `{{ p.title }}` (lowercase attribute access for the dataclass). CSS, error banner, form (Fetch & Add + Export MD + Export BibTeX), table columns, and the per-row ✕ delete button.
 
 ## Markdown export (`papers.md`)
 
@@ -225,7 +214,7 @@ The `Authors (Year)` line drops the `(Year)` suffix entirely when `Year` is empt
 
 ## BibTeX export (`papers.bib`)
 
-Each paper is emitted as an `@article{…}` block; the format and rules (citation key, author format, `{{...}}` title wrapping, TeX escaping, omit-empty) are identical to the Go version.
+Each paper is emitted as an `@article{…}` block with citation key, author format, `{{...}}` title wrapping, TeX escaping, and omit-empty fields.
 
 One Python-specific subtlety: `bib_escape` uses a single-pass dict lookup (`"".join(_ESCAPE_TABLE.get(c, c) for c in s)`) because chained `str.replace` calls would re-escape the `{` and `}` inside `\textbackslash{}`. Don't refactor it back to sequential replace.
 
