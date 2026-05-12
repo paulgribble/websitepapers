@@ -35,27 +35,27 @@ A `dois.db` SQLite file is created in the working directory on first run.
 
 ## Make targets
 
-|        Target         |                            Action                            |
-| --------------------- | ------------------------------------------------------------ |
-| `make install`        | `uv sync` (creates `.venv`, installs deps)                   |
-| `make run`            | `uv run python app.py`                                       |
-| `make test`           | `uv run pytest`                                              |
-| `make clean`          | Remove `.venv`, `__pycache__`, `.pytest_cache`, `uv.lock`    |
-| `make docker-build`   | Build the image locally as `websitepapers:latest`            |
-| `make docker-run`     | Run the locally built image on port 80, mounting `./storage` |
-| `make docker-pull`    | Pull the published image from GHCR                           |
-| `make docker-run-ghcr`| Run the GHCR image on port 80, mounting `./storage`          |
+|         Target         |                            Action                            |
+| ---------------------- | ------------------------------------------------------------ |
+| `make install`         | `uv sync` (creates `.venv`, installs deps)                   |
+| `make run`             | `uv run python app.py`                                       |
+| `make test`            | `uv run pytest`                                              |
+| `make clean`           | Remove `.venv`, `__pycache__`, `.pytest_cache`, `uv.lock`    |
+| `make docker-build`    | Build the image locally as `websitepapers:latest`            |
+| `make docker-run`      | Run the locally built image on port 80, mounting `./storage` |
+| `make docker-pull`     | Pull the published image from GHCR                           |
+| `make docker-run-ghcr` | Run the GHCR image on port 80, mounting `./storage`          |
 
 ## Routes
 
-| Method |     Path      |                  Description                  |
-| ------ | ------------- | --------------------------------------------- |
-| GET    | `/`           | List all papers (newest first)                |
+| Method |     Path      |                           Description                            |
+| ------ | ------------- | ---------------------------------------------------------------- |
+| GET    | `/`           | List all papers (newest first)                                   |
 | GET    | `/up`         | Health check (returns 200 `OK`) — used by the Docker HEALTHCHECK |
-| POST   | `/submit`     | Validate DOI, fetch metadata, store in DB     |
-| POST   | `/delete`     | Delete a row by `id`                          |
-| GET    | `/export`     | Download `papers.md` — all papers as Markdown |
-| GET    | `/export.bib` | Download `papers.bib` — all papers as BibTeX  |
+| POST   | `/submit`     | Validate DOI, fetch metadata, store in DB                        |
+| POST   | `/delete`     | Delete a row by `id`                                             |
+| GET    | `/export`     | Download `papers.md` — all papers as Markdown                    |
+| GET    | `/export.bib` | Download `papers.bib` — all papers as BibTeX                     |
 
 ## Markdown export
 

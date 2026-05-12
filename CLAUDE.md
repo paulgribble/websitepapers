@@ -56,14 +56,14 @@ Direct invocation also works: `uv run python app.py`, `uv run pytest`.
 
 ## Routes
 
-| Method |     Path      |                        Description                        |
-| ------ | ------------- | --------------------------------------------------------- |
-| GET    | `/`           | List all papers (newest first); 405 on non-GET            |
+| Method |     Path      |                                  Description                                   |
+| ------ | ------------- | ------------------------------------------------------------------------------ |
+| GET    | `/`           | List all papers (newest first); 405 on non-GET                                 |
 | GET    | `/up`         | Health check — returns 200 `OK` (`text/plain`); used by the Docker HEALTHCHECK |
-| POST   | `/submit`     | Validate DOI, fetch metadata, store in DB; non-POST → `/` |
-| POST   | `/delete`     | Delete row by `id` form field; non-POST → `/`             |
-| GET    | `/export`     | Download `papers.md` — all papers as Markdown             |
-| GET    | `/export.bib` | Download `papers.bib` — all papers as BibTeX              |
+| POST   | `/submit`     | Validate DOI, fetch metadata, store in DB; non-POST → `/`                      |
+| POST   | `/delete`     | Delete row by `id` form field; non-POST → `/`                                  |
+| GET    | `/export`     | Download `papers.md` — all papers as Markdown                                  |
+| GET    | `/export.bib` | Download `papers.bib` — all papers as BibTeX                                   |
 
 Error paths return real HTTP status codes (400 invalid DOI, 409 duplicate, 500 db/insert/delete, 502 Crossref upstream failure).
 
@@ -87,30 +87,30 @@ Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` wo
 ## Key functions, by file
 
 ### app.py
-|            Function             |                                     Purpose                                      |
-| ------------------------------- | -------------------------------------------------------------------------------- |
+|            Function             |                                                       Purpose                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `_basic_auth_ok(header)`        | Decode an `Authorization: Basic ...` header and constant-time-compare against `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` |
-| `_require_basic_auth()`         | `@app.before_request` hook — 401s every route except `/up` when both env vars are set; no-op when unset |
-| `home()`                        | Render paper list (GET only)                                                     |
-| `health()`                      | `GET /up` — returns `("OK", 200, {"Content-Type": "text/plain; charset=utf-8"})` |
-| `submit()`                      | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                    |
-| `delete()`                      | Delete by form `id`, 303 → `/`                                                   |
-| `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                              |
-| `export_bib()`                  | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`)                      |
-| `citation_text(p)`              | Display string for the markdown export's citation link (preprint-aware)          |
-| `render_page(status, message)`  | Render `index.html` with current papers list                                     |
-| `respond_err(status, msg, err)` | Log err and render error page in one call (analogue of Go's `respondErr` helper) |
+| `_require_basic_auth()`         | `@app.before_request` hook — 401s every route except `/up` when both env vars are set; no-op when unset             |
+| `home()`                        | Render paper list (GET only)                                                                                        |
+| `health()`                      | `GET /up` — returns `("OK", 200, {"Content-Type": "text/plain; charset=utf-8"})`                                    |
+| `submit()`                      | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                                                       |
+| `delete()`                      | Delete by form `id`, 303 → `/`                                                                                      |
+| `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                                                                 |
+| `export_bib()`                  | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`)                                                         |
+| `citation_text(p)`              | Display string for the markdown export's citation link (preprint-aware)                                             |
+| `render_page(status, message)`  | Render `index.html` with current papers list                                                                        |
+| `respond_err(status, msg, err)` | Log err and render error page in one call (analogue of Go's `respondErr` helper)                                    |
 
 The `Content-Type` for both export routes is set via the `headers=` argument rather than `mimetype=`; Flask appends `; charset=utf-8` to `text/*` mimetypes, which would double the charset on `text/markdown; charset=utf-8`.
 
 ### db.py
-|      Function       |                                      Purpose                                      |
-| ------------------- | --------------------------------------------------------------------------------- |
+|      Function       |                                                            Purpose                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `init_db()`         | Create schema, run migrations; called from `if __name__ == "__main__":` in app.py and at module import in `wsgi.py` (Gunicorn) |
-| `get_papers()`      | `SELECT … ORDER BY id DESC` with `COALESCE(volume,'')`, `COALESCE(page,'')`       |
-| `paper_exists(doi)` | `SELECT EXISTS(...)` for duplicate check                                          |
-| `insert_paper(p)`   | INSERT one row                                                                    |
-| `delete_paper(id)`  | DELETE WHERE id=?                                                                 |
+| `get_papers()`      | `SELECT … ORDER BY id DESC` with `COALESCE(volume,'')`, `COALESCE(page,'')`                                                    |
+| `paper_exists(doi)` | `SELECT EXISTS(...)` for duplicate check                                                                                       |
+| `insert_paper(p)`   | INSERT one row                                                                                                                 |
+| `delete_paper(id)`  | DELETE WHERE id=?                                                                                                              |
 
 Each function opens its own connection via `_connect()`; SQLite is per-call, not pooled. Fine for a single-user local app.
 
