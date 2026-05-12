@@ -179,8 +179,6 @@ The first two raise `sqlite3.OperationalError("duplicate column name")` once the
 
 ## DOI handling
 
-Identical behavior to the Go version:
-
 - Accepted input: bare DOI (`10.xxxx/...`) or URL variants (`https://doi.org/...`, `https://dx.doi.org/...`, `doi.org/...`, `dx.doi.org/...`)
 - Validation regex: `^10\.\d{4,}(?:\.\d+)?/\S+$` (case-insensitive)
 - `normalize_doi()` trims, strips known URL prefixes, **and lowercases** the result. DOIs are officially case-insensitive per the DOI handbook.
@@ -243,13 +241,13 @@ gunicorn --bind 0.0.0.0:80 --user app --group app --workers 2 --access-logfile -
 
 ## Tests
 
-`test_app.py` uses pytest with `@pytest.mark.parametrize` for table-driven coverage (62 cases total). The Crossref fetcher is exercised via `unittest.mock.patch("urllib.request.urlopen", side_effect=...)` — no live HTTP, no local server thread. Coverage matches the Go test suite case-for-case:
+`test_app.py` uses pytest with `@pytest.mark.parametrize` for table-driven coverage (62 cases total). The Crossref fetcher is exercised via `unittest.mock.patch("urllib.request.urlopen", side_effect=...)` — no live HTTP, no local server thread.
 
 - `test_normalize_doi` — every prefix variant, casing, whitespace
 - `test_citation_text` — bioRxiv/medRxiv special case + every volume/pages combo
 - `test_fetch_metadata_*` — happy path (asserts UA, URL), 404, article-number fallback, year priority fallthrough, bioRxiv institution fallback, trailing-slash on base
 - `test_given_initials` — single, multi, smashed (`A.G.`), hyphenated, Unicode
 - `test_bib_authors` — single + multi-author, multi-word surnames, multi-initial
-- `test_bib_escape` — every escaped char (this is the regression that caught the sequential-replace bug during the Go → Python port)
+- `test_bib_escape` — every escaped char (this is the regression that caught the sequential-replace bug)
 - `test_bib_ascii_fold` — Müller, Émile, Zoë, naïve, Çelik
 - `test_bib_key` — collision suffixes + diacritic input
