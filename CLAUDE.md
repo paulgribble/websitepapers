@@ -61,6 +61,7 @@ Direct invocation also works: `uv run python app.py`, `uv run pytest`.
 | GET    | `/`           | List all papers (newest first); 405 on non-GET                                 |
 | GET    | `/up`         | Health check — returns 200 `OK` (`text/plain`); used by the Docker HEALTHCHECK |
 | POST   | `/submit`     | Validate DOI, fetch metadata, store in DB; non-POST → `/`                      |
+| POST   | `/import`     | Bulk import — multipart upload of a `.txt` file (one DOI/URL per line)         |
 | POST   | `/delete`     | Delete row by `id` form field; non-POST → `/`                                  |
 | GET    | `/export`     | Download `papers.md` — all papers as Markdown                                  |
 | GET    | `/export.bib` | Download `papers.bib` — all papers as BibTeX                                   |
@@ -93,7 +94,9 @@ Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` wo
 | `_require_basic_auth()`         | `@app.before_request` hook — 401s every route except `/up` when both env vars are set; no-op when unset             |
 | `home()`                        | Render paper list (GET only)                                                                                        |
 | `health()`                      | `GET /up` — returns `("OK", 200, {"Content-Type": "text/plain; charset=utf-8"})`                                    |
-| `submit()`                      | Normalize DOI → validate → dedupe → fetch → insert; 303 → `/`                                                       |
+| `ingest_doi(raw)`               | Shared kernel: normalize → validate → dedupe → fetch → insert; returns `INGEST_OK`/`INVALID`/`DUPLICATE`/`FETCH_ERR`/`DB_ERR`. Used by both `submit()` and `import_file()`. Errors logged inside. |
+| `submit()`                      | Calls `ingest_doi` on form `doi`; maps tag → HTTP response (303 on OK, 400/409/500/502 otherwise)                   |
+| `import_file()`                 | `POST /import` — read uploaded `.txt`, ingest each non-blank line, summary banner: `Imported N. Failed: <lines>`     |
 | `delete()`                      | Delete by form `id`, 303 → `/`                                                                                      |
 | `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                                                                 |
 | `export_bib()`                  | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`)                                                         |

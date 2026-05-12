@@ -5,6 +5,7 @@ A minimal Python web application for collecting and browsing academic papers by 
 ## Features
 
 - Paste a bare DOI (`10.xxxx/...`) or any common URL form (`https://doi.org/...`, `dx.doi.org/...`)
+- Bulk-import from a text file (one DOI or DOI URL per line; blank lines ignored)
 - Automatic metadata lookup via Crossref (title, authors, journal, year, volume, pages); identifies the client to Crossref's polite pool via `User-Agent`
 - Multi-initial parsing of given names (e.g. `Andrew A.G. Mattar`, `Marie-Claude`, Unicode like `Émile`)
 - Case-insensitive duplicate detection (DOIs are officially case-insensitive)
@@ -53,6 +54,7 @@ A `dois.db` SQLite file is created in the working directory on first run.
 | GET    | `/`           | List all papers (newest first)                                   |
 | GET    | `/up`         | Health check (returns 200 `OK`) — used by the Docker HEALTHCHECK |
 | POST   | `/submit`     | Validate DOI, fetch metadata, store in DB                        |
+| POST   | `/import`     | Bulk-import DOIs from an uploaded text file                      |
 | POST   | `/delete`     | Delete a row by `id`                                             |
 | GET    | `/export`     | Download `papers.md` — all papers as Markdown                    |
 | GET    | `/export.bib` | Download `papers.bib` — all papers as BibTeX                     |

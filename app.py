@@ -3,6 +3,7 @@ import io
 import os
 import secrets
 import sqlite3
+import time
 
 from flask import Flask, Response, redirect, render_template, request
 
@@ -12,9 +13,44 @@ from db import Paper, delete_all_papers, delete_paper, get_papers, init_db, inse
 from doi import DOI_REGEX, normalize_doi
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  # 1 MB — caps /import upload size
 
 BASIC_AUTH_USER = os.environ.get("BASIC_AUTH_USER", "")
 BASIC_AUTH_PASS = os.environ.get("BASIC_AUTH_PASS", "")
+
+INGEST_OK = "ok"
+INGEST_INVALID = "invalid"
+INGEST_DUPLICATE = "duplicate"
+INGEST_FETCH_ERR = "fetch_error"
+INGEST_DB_ERR = "db_error"
+
+
+def ingest_doi(raw: str) -> str:
+    """Normalize → validate → dedupe → fetch → insert one DOI. Returns an INGEST_* tag.
+
+    Shared by /submit (single DOI) and /import (bulk file upload). Errors are logged
+    via app.logger here so callers only need to map the tag to an HTTP response.
+    """
+    clean = normalize_doi(raw)
+    if not DOI_REGEX.match(clean):
+        return INGEST_INVALID
+    try:
+        if paper_exists(clean):
+            return INGEST_DUPLICATE
+    except sqlite3.Error as e:
+        app.logger.error("paper_exists failed for %r: %s", clean, e)
+        return INGEST_DB_ERR
+    try:
+        paper = fetch_metadata(clean)
+    except Exception as e:
+        app.logger.error("fetch_metadata failed for %r: %s", clean, e)
+        return INGEST_FETCH_ERR
+    try:
+        insert_paper(paper)
+    except sqlite3.Error as e:
+        app.logger.error("insert_paper failed for %r: %s", clean, e)
+        return INGEST_DB_ERR
+    return INGEST_OK
 
 
 def _basic_auth_ok(header: str) -> bool:
@@ -76,27 +112,48 @@ def submit():
     if request.method != "POST":
         return redirect("/", code=303)
 
-    clean = normalize_doi(request.form.get("doi", ""))
-    if not DOI_REGEX.match(clean):
+    result = ingest_doi(request.form.get("doi", ""))
+    if result == INGEST_OK:
+        return redirect("/", code=303)
+    if result == INGEST_INVALID:
         return render_page(400, "Invalid DOI format. Please use 10.xxxx/xxxx or a DOI URL.")
+    if result == INGEST_DUPLICATE:
+        return render_page(409, "DOI is already in the list.")
+    if result == INGEST_FETCH_ERR:
+        return render_page(502, "Could not fetch metadata for that DOI. Please check it and try again.")
+    return render_page(500, "Database error. Please try again.")
 
-    try:
-        if paper_exists(clean):
-            return render_page(409, "DOI is already in the list.")
-    except sqlite3.Error as e:
-        return respond_err(500, "Database error. Please try again.", e)
 
+@app.route("/import", methods=["POST"])
+def import_file():
+    f = request.files.get("file")
+    if not f:
+        return render_page(400, "No file provided.")
     try:
-        paper = fetch_metadata(clean)
+        raw = f.read().decode("utf-8", errors="replace")
     except Exception as e:
-        return respond_err(502, "Could not fetch metadata for that DOI. Please check it and try again.", e)
+        return respond_err(400, "Could not read uploaded file.", e)
 
-    try:
-        insert_paper(paper)
-    except sqlite3.Error as e:
-        return respond_err(500, "Failed to save paper. Please try again.", e)
+    added = 0
+    failures: list[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        result = ingest_doi(s)
+        if result == INGEST_OK:
+            added += 1
+            time.sleep(0.05)  # polite-pool throttle between Crossref fetches
+        else:
+            failures.append(s)
 
-    return redirect("/", code=303)
+    if added == 0 and not failures:
+        return render_page(400, "No DOIs found in file.")
+
+    msg = f"Imported {added}."
+    if failures:
+        msg += " Failed: " + ", ".join(failures)
+    return render_page(200, msg)
 
 
 @app.route("/delete", methods=["GET", "POST"])

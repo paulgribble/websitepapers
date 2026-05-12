@@ -1,10 +1,13 @@
+import io
 import json
 import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import app as app_module
 import crossref
+import db
 from app import citation_text
 from bibtex import bib_ascii_fold, bib_authors, bib_escape, bib_key
 from crossref import fetch_metadata, given_initials
@@ -241,3 +244,99 @@ def test_bib_key():
 
     p3 = Paper(authors="Müller H.", year="2024", title="On X")
     assert bib_key(p3, used) == "muller2024on"
+
+
+# ---------- /import route ----------
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    db_file = tmp_path / "test.db"
+    monkeypatch.setattr(db, "DB_PATH", str(db_file))
+    db.init_db()
+    # Bypass the 50 ms polite-pool throttle so the test suite stays snappy.
+    monkeypatch.setattr(app_module.time, "sleep", lambda _s: None)
+    app_module.app.config["TESTING"] = True
+    return app_module.app.test_client()
+
+
+def _ok_body(doi_marker: str = "x"):
+    return {"message": {
+        "title": [f"T-{doi_marker}"],
+        "container-title": ["J"],
+        "author": [{"given": "A", "family": "B"}],
+        "issued": {"date-parts": [[2024]]},
+    }}
+
+
+def _post_file(client, content: bytes):
+    return client.post(
+        "/import",
+        data={"file": (io.BytesIO(content), "dois.txt")},
+        content_type="multipart/form-data",
+    )
+
+
+def test_import_mixed_urls_and_bare_dois(client):
+    content = b"10.1234/a\nhttps://doi.org/10.1234/b\ndoi.org/10.1234/c\n"
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen(_ok_body())):
+        resp = _post_file(client, content)
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Imported 3." in body
+    assert "Failed:" not in body
+
+
+def test_import_ignores_blank_lines(client):
+    content = b"\n\n10.1234/x\n   \n\n"
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen(_ok_body())):
+        resp = _post_file(client, content)
+    assert resp.status_code == 200
+    assert "Imported 1." in resp.get_data(as_text=True)
+
+
+def test_import_partial_failure_invalid_line(client):
+    content = b"not-a-doi\n10.1234/x\n"
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen(_ok_body())):
+        resp = _post_file(client, content)
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Imported 1." in body
+    assert "Failed: not-a-doi" in body
+
+
+def test_import_all_duplicates(client):
+    db.insert_paper(Paper(doi="10.1234/a", title="t", authors="a", journal="j", year="2024"))
+    db.insert_paper(Paper(doi="10.1234/b", title="t", authors="a", journal="j", year="2024"))
+    content = b"10.1234/a\n10.1234/b\n"
+    # Crossref must not be hit for duplicates; raise loudly if it is.
+    with patch("urllib.request.urlopen", side_effect=AssertionError("should not call Crossref")):
+        resp = _post_file(client, content)
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Imported 0." in body
+    assert "10.1234/a" in body and "10.1234/b" in body
+
+
+def test_import_crossref_404_on_one_line(client):
+    def fake(req, timeout=None):
+        if "10.1234%2Fbad" in req.full_url:
+            raise urllib.error.HTTPError(req.full_url, 404, "nope", {}, None)
+        return _mock_response(_ok_body())
+    with patch("urllib.request.urlopen", side_effect=fake):
+        resp = _post_file(client, b"10.1234/good1\n10.1234/bad\n10.1234/good2\n")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Imported 2." in body
+    assert "Failed: 10.1234/bad" in body
+
+
+def test_import_empty_file(client):
+    resp = _post_file(client, b"\n\n   \n")
+    assert resp.status_code == 400
+    assert "No DOIs found in file." in resp.get_data(as_text=True)
+
+
+def test_import_no_file_field(client):
+    resp = client.post("/import", data={}, content_type="multipart/form-data")
+    assert resp.status_code == 400
+    assert "No file provided." in resp.get_data(as_text=True)
