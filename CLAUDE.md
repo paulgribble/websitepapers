@@ -26,7 +26,7 @@ doi.py                — DOI_REGEX, normalize_doi
 crossref.py           — fetch_metadata, given_initials, CROSSREF_BASE
 bibtex.py             — write_bib_entry, bib_key, bib_alpha, bib_ascii_fold,
                         bib_authors, bib_escape
-test_app.py           — pytest tests (62 cases, mostly @pytest.mark.parametrize)
+test_app.py           — pytest tests (73 cases, mostly @pytest.mark.parametrize)
 templates/index.html  — single Jinja2 template (UI)
 pyproject.toml        — project metadata + Flask + Gunicorn (dependency-group dev: pytest)
 uv.lock               — uv's dependency lockfile (generated)
@@ -98,6 +98,7 @@ Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` wo
 | `submit()`                      | Calls `ingest_doi` on form `doi`; maps tag → HTTP response (303 on OK, 400/409/500/502 otherwise)                   |
 | `import_file()`                 | `POST /import` — read uploaded `.txt`, ingest each non-blank line, summary banner: `Imported N. Failed: <lines>`     |
 | `delete()`                      | Delete by form `id`, 303 → `/`                                                                                      |
+| `_md_authors(authors)`          | Truncate to first author + `" et al."` when there are more than 5 authors; used by `export_md()`                   |
 | `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                                                                 |
 | `export_bib()`                  | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`)                                                         |
 | `citation_text(p)`              | Display string for the markdown export's citation link (preprint-aware)                                             |
@@ -203,7 +204,7 @@ Authors (Year)
 [Citation](https://doi.org/DOI)
 ```
 
-The `Authors (Year)` line drops the `(Year)` suffix entirely when `Year` is empty.
+The `Authors (Year)` line drops the `(Year)` suffix entirely when `Year` is empty. When a paper has more than 5 authors, only the first author is shown followed by `et al.` (BibTeX export is unaffected).
 
 `citation_text()` formats the citation link text as:
 - **bioRxiv / medRxiv** (case-insensitive journal match): `Journal:doi_suffix` (e.g. `bioRxiv:2026.04.27.721195`)
@@ -244,10 +245,11 @@ gunicorn --bind 0.0.0.0:80 --user app --group app --workers 2 --access-logfile -
 
 ## Tests
 
-`test_app.py` uses pytest with `@pytest.mark.parametrize` for table-driven coverage (62 cases total). The Crossref fetcher is exercised via `unittest.mock.patch("urllib.request.urlopen", side_effect=...)` — no live HTTP, no local server thread.
+`test_app.py` uses pytest with `@pytest.mark.parametrize` for table-driven coverage (73 cases total). The Crossref fetcher is exercised via `unittest.mock.patch("urllib.request.urlopen", side_effect=...)` — no live HTTP, no local server thread.
 
 - `test_normalize_doi` — every prefix variant, casing, whitespace
 - `test_citation_text` — bioRxiv/medRxiv special case + every volume/pages combo
+- `test_md_authors` — ≤5 authors unchanged, >5 authors → first + et al.
 - `test_fetch_metadata_*` — happy path (asserts UA, URL), 404, article-number fallback, year priority fallthrough, bioRxiv institution fallback, trailing-slash on base
 - `test_given_initials` — single, multi, smashed (`A.G.`), hyphenated, Unicode
 - `test_bib_authors` — single + multi-author, multi-word surnames, multi-initial

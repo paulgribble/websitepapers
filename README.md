@@ -72,6 +72,8 @@ Authors (Year)
 
 (The `**Title**` and `Authors (Year)` lines end with two trailing spaces to produce hard line breaks.)
 
+When a paper has more than 5 authors, only the first author is shown followed by `et al.`
+
 The citation text adapts to what Crossref returns:
 
 - **bioRxiv / medRxiv**: `bioRxiv:2026.04.27.721195`
