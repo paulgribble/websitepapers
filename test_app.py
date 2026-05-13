@@ -8,7 +8,7 @@ import pytest
 import app as app_module
 import crossref
 import db
-from app import citation_text
+from app import _md_authors, citation_text
 from bibtex import bib_ascii_fold, bib_authors, bib_escape, bib_key
 from crossref import fetch_metadata, given_initials
 from db import Paper
@@ -244,6 +244,18 @@ def test_bib_key():
 
     p3 = Paper(authors="Müller H.", year="2024", title="On X")
     assert bib_key(p3, used) == "muller2024on"
+
+
+# ---------- _md_authors ----------
+
+@pytest.mark.parametrize("inp,want", [
+    ("Smith J.", "Smith J."),
+    ("Smith J., Jones A., Brown C., Davis E., Wilson F.", "Smith J., Jones A., Brown C., Davis E., Wilson F."),
+    ("Smith J., Jones A., Brown C., Davis E., Wilson F., Taylor G.", "Smith J. et al."),
+    ("A A., B B., C C., D D., E E., F F., G G.", "A A. et al."),
+])
+def test_md_authors(inp, want):
+    assert _md_authors(inp) == want
 
 
 # ---------- /import route ----------

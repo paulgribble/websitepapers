@@ -178,16 +178,24 @@ def delete_all():
     return redirect("/", code=303)
 
 
+def _md_authors(authors: str) -> str:
+    parts = authors.split(", ")
+    if len(parts) > 5:
+        return f"{parts[0]} et al."
+    return authors
+
+
 @app.route("/export", methods=["GET"])
 def export_md():
     buf = io.StringIO()
     for i, p in enumerate(get_papers(), start=1):
         buf.write(f"### {i}\n")
         buf.write(f"**{p.title}**  \n")
+        authors = _md_authors(p.authors)
         if p.year:
-            buf.write(f"{p.authors} ({p.year})  \n")
+            buf.write(f"{authors} ({p.year})  \n")
         else:
-            buf.write(f"{p.authors}  \n")
+            buf.write(f"{authors}  \n")
         buf.write(f"[{citation_text(p)}](https://doi.org/{p.doi})\n\n")
     return Response(
         buf.getvalue(),
