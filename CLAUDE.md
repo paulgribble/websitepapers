@@ -26,7 +26,7 @@ doi.py                — DOI_REGEX, normalize_doi
 crossref.py           — fetch_metadata, given_initials, CROSSREF_BASE
 bibtex.py             — write_bib_entry, bib_key, bib_alpha, bib_ascii_fold,
                         bib_authors, bib_escape
-test_app.py           — pytest tests (73 cases, mostly @pytest.mark.parametrize)
+test_app.py           — pytest tests (89 cases, mostly @pytest.mark.parametrize)
 templates/index.html  — single Jinja2 template (UI)
 pyproject.toml        — project metadata + Flask + Gunicorn (dependency-group dev: pytest)
 uv.lock               — uv's dependency lockfile (generated)
@@ -68,6 +68,12 @@ Direct invocation also works: `uv run python app.py`, `uv run pytest`.
 
 Error paths return real HTTP status codes (400 invalid DOI, 409 duplicate, 500 db/insert/delete, 502 Crossref upstream failure).
 
+### Request hardening
+
+- **CSRF**: every non-GET request is checked by `_reject_cross_site_posts()`. `Sec-Fetch-Site` is authoritative when present (only `same-origin` and `none` pass); otherwise `Origin` must match `request.host` (host only, not scheme, because a TLS-terminating proxy makes Flask see `http://`). Requests with neither header (curl, scripts) are allowed — a browser mounting a CSRF attack always sends at least one, so this is not a bypass. Rejections return 403 `text/plain` and log a WARNING.
+- **Clickjacking**: `_security_headers()` sets `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'` on every response.
+- **Auth misconfiguration**: `_warn_if_auth_unset()` runs at import and logs a WARNING (visible in `docker logs`) if Basic Auth is not fully configured.
+
 ## Data model
 
 ```python
@@ -92,6 +98,10 @@ Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` wo
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `_basic_auth_ok(header)`        | Decode an `Authorization: Basic ...` header and constant-time-compare against `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` |
 | `_require_basic_auth()`         | `@app.before_request` hook — 401s every route except `/up` when both env vars are set; no-op when unset             |
+| `_warn_if_auth_unset()`         | Called once at import: logs a WARNING when `BASIC_AUTH_USER`/`BASIC_AUTH_PASS` are missing or only one is set        |
+| `_cross_site_request()`         | CSRF predicate: `Sec-Fetch-Site` not in `same-origin`/`none`, else `Origin` host ≠ `request.host`; no headers → allowed |
+| `_reject_cross_site_posts()`    | `@app.before_request` hook — 403 on any non-GET/HEAD/OPTIONS request that `_cross_site_request()` flags               |
+| `_security_headers(resp)`       | `@app.after_request` hook — adds `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`       |
 | `home()`                        | Render paper list (GET only)                                                                                        |
 | `health()`                      | `GET /up` — returns `("OK", 200, {"Content-Type": "text/plain; charset=utf-8"})`                                    |
 | `ingest_doi(raw)`               | Shared kernel: normalize → validate → dedupe → fetch → insert; returns `INGEST_OK`/`INVALID`/`DUPLICATE`/`FETCH_ERR`/`DB_ERR`. Used by both `submit()` and `import_file()`. Errors logged inside. |
@@ -245,7 +255,7 @@ gunicorn --bind 0.0.0.0:80 --user app --group app --workers 2 --access-logfile -
 
 ## Tests
 
-`test_app.py` uses pytest with `@pytest.mark.parametrize` for table-driven coverage (73 cases total). The Crossref fetcher is exercised via `unittest.mock.patch("urllib.request.urlopen", side_effect=...)` — no live HTTP, no local server thread.
+`test_app.py` uses pytest with `@pytest.mark.parametrize` for table-driven coverage (89 cases total). The Crossref fetcher is exercised via `unittest.mock.patch("urllib.request.urlopen", side_effect=...)` — no live HTTP, no local server thread.
 
 - `test_normalize_doi` — every prefix variant, casing, whitespace
 - `test_citation_text` — bioRxiv/medRxiv special case + every volume/pages combo
@@ -256,3 +266,6 @@ gunicorn --bind 0.0.0.0:80 --user app --group app --workers 2 --access-logfile -
 - `test_bib_escape` — every escaped char (this is the regression that caught the sequential-replace bug)
 - `test_bib_ascii_fold` — Müller, Émile, Zoë, naïve, Çelik
 - `test_bib_key` — collision suffixes + diacritic input
+- `test_csrf_*` — cross-site `Sec-Fetch-Site`/`Origin` → 403 and DB untouched; same-origin/none/no-headers → allowed; GETs never blocked
+- `test_frame_headers_present` — `X-Frame-Options` + `frame-ancestors` on every response
+- `test_auth_warning_*` — WARNING logged when env vars are missing or half-set; silent when both set

@@ -352,3 +352,70 @@ def test_import_no_file_field(client):
     resp = client.post("/import", data={}, content_type="multipart/form-data")
     assert resp.status_code == 400
     assert "No file provided." in resp.get_data(as_text=True)
+
+
+# ---------- CSRF / security headers / auth warning ----------
+
+def _seed(doi="10.1234/a"):
+    db.insert_paper(Paper(doi=doi, title="t", authors="a", journal="j", year="2024"))
+
+
+@pytest.mark.parametrize("headers", [
+    {"Sec-Fetch-Site": "cross-site"},
+    {"Sec-Fetch-Site": "same-site"},
+    {"Origin": "https://evil.example"},
+    {"Origin": "null"},
+    # Sec-Fetch-Site wins over a spoofed-looking Origin.
+    {"Sec-Fetch-Site": "cross-site", "Origin": "http://localhost"},
+])
+def test_csrf_rejects_cross_site_post(client, headers):
+    _seed()
+    resp = client.post("/delete_all", headers=headers)
+    assert resp.status_code == 403
+    assert len(db.get_papers()) == 1
+
+
+@pytest.mark.parametrize("headers", [
+    {},
+    {"Sec-Fetch-Site": "same-origin"},
+    {"Sec-Fetch-Site": "none"},
+    {"Origin": "http://localhost"},
+    {"Origin": "https://localhost"},
+])
+def test_csrf_allows_same_origin_post(client, headers):
+    _seed()
+    resp = client.post("/delete_all", headers=headers)
+    assert resp.status_code == 303
+    assert db.get_papers() == []
+
+
+def test_csrf_check_ignores_get(client):
+    resp = client.get("/", headers={"Sec-Fetch-Site": "cross-site"})
+    assert resp.status_code == 200
+
+
+def test_frame_headers_present(client):
+    resp = client.get("/")
+    assert resp.headers["X-Frame-Options"] == "DENY"
+    assert resp.headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+
+
+@pytest.mark.parametrize("user,pw,fragment", [
+    ("", "", "are not set"),
+    ("u", "", "Only one of"),
+    ("", "p", "Only one of"),
+])
+def test_auth_warning_when_unset(monkeypatch, caplog, user, pw, fragment):
+    monkeypatch.setattr(app_module, "BASIC_AUTH_USER", user)
+    monkeypatch.setattr(app_module, "BASIC_AUTH_PASS", pw)
+    with caplog.at_level("WARNING", logger=app_module.app.logger.name):
+        app_module._warn_if_auth_unset()
+    assert any(fragment in r.getMessage() and "DISABLED" in r.getMessage() for r in caplog.records)
+
+
+def test_no_auth_warning_when_set(monkeypatch, caplog):
+    monkeypatch.setattr(app_module, "BASIC_AUTH_USER", "u")
+    monkeypatch.setattr(app_module, "BASIC_AUTH_PASS", "p")
+    with caplog.at_level("WARNING", logger=app_module.app.logger.name):
+        app_module._warn_if_auth_unset()
+    assert caplog.records == []

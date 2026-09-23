@@ -159,10 +159,15 @@ BASIC_AUTH_PASS=<your-password>
 ```
 
 - If **both** are set, every route except `/up` requires the credentials. Your browser will prompt on first visit.
-- If **either** is unset, auth is disabled (this is the default — fine for `make run` on `localhost`).
+- If **either** is unset, auth is disabled (this is the default — fine for `make run` on `localhost`). The app logs a startup WARNING in this state so a missing credential on a public deployment shows up in `docker logs`.
 - The `/up` healthcheck stays open so the Docker `HEALTHCHECK` and ONCE's monitoring continue to work without credentials.
 
 For ONCE deployments, set these in the app's environment via the ONCE admin UI — the password lives in ONCE's secret store, not in the image or your repo. There is no signup flow and no per-user accounts; it's a single shared credential intended for one-person libraries.
+
+Two further protections are always on, whether or not auth is configured:
+
+- **Cross-site request forgery (CSRF)**: browsers attach cached Basic Auth credentials to requests from other sites, so every non-GET request is checked against its `Sec-Fetch-Site` (or, for older browsers, `Origin`) header and rejected with 403 if it came from another origin. Requests without either header, such as `curl`, are still accepted.
+- **Clickjacking**: every response carries `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, so the page cannot be embedded in another site's frame.
 
 ## Project layout
 

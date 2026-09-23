@@ -4,6 +4,7 @@ import os
 import secrets
 import sqlite3
 import time
+import urllib.parse
 
 from flask import Flask, Response, redirect, render_template, request
 
@@ -83,6 +84,71 @@ def _require_basic_auth():
         status=401,
         headers={"WWW-Authenticate": 'Basic realm="websitepapers"'},
     )
+
+
+def _warn_if_auth_unset() -> None:
+    """Log loudly at startup when Basic Auth is not fully configured."""
+    if BASIC_AUTH_USER and BASIC_AUTH_PASS:
+        return
+    if BASIC_AUTH_USER or BASIC_AUTH_PASS:
+        app.logger.warning(
+            "Only one of BASIC_AUTH_USER / BASIC_AUTH_PASS is set; "
+            "authentication is DISABLED. Set both to enable it."
+        )
+    else:
+        app.logger.warning(
+            "BASIC_AUTH_USER and BASIC_AUTH_PASS are not set; authentication is "
+            "DISABLED. Anyone who can reach this server can add or delete papers."
+        )
+
+
+_warn_if_auth_unset()
+
+_SAME_SITE_FETCH = ("same-origin", "none")
+
+
+def _cross_site_request() -> bool:
+    """True when browser-supplied metadata shows the request came from another site.
+
+    Prefers Sec-Fetch-Site (sent by every current browser); falls back to Origin.
+    Requests carrying neither header (curl, scripts) are allowed: a browser
+    mounting a CSRF attack always sends at least one, so omission is not a bypass.
+    Only the host is compared for Origin because a TLS-terminating proxy makes
+    Flask see http:// while the browser's Origin says https://.
+    """
+    fetch_site = request.headers.get("Sec-Fetch-Site")
+    if fetch_site is not None:
+        return fetch_site not in _SAME_SITE_FETCH
+    origin = request.headers.get("Origin")
+    if origin is None:
+        return False
+    return urllib.parse.urlsplit(origin).netloc != request.host
+
+
+@app.before_request
+def _reject_cross_site_posts():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    if _cross_site_request():
+        app.logger.warning(
+            "Rejected cross-site %s %s (Sec-Fetch-Site=%r, Origin=%r)",
+            request.method, request.path,
+            request.headers.get("Sec-Fetch-Site"), request.headers.get("Origin"),
+        )
+        return Response(
+            "Cross-site request rejected",
+            status=403,
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+        )
+
+
+@app.after_request
+def _security_headers(resp):
+    # Browsers honour whichever they support; together they stop framing
+    # (clickjacking) of the page and its cached Basic Auth session.
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    return resp
 
 
 def render_page(status: int = 200, message: str = ""):
