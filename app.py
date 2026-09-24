@@ -9,7 +9,7 @@ import urllib.parse
 from flask import Flask, Response, redirect, render_template, request
 
 from bibtex import write_bib_entry
-from crossref import fetch_metadata
+from crossref import DOINotFound, fetch_metadata
 from db import Paper, delete_all_papers, delete_paper, get_papers, init_db, insert_paper, paper_exists
 from doi import DOI_REGEX, normalize_doi
 
@@ -22,6 +22,7 @@ BASIC_AUTH_PASS = os.environ.get("BASIC_AUTH_PASS", "")
 INGEST_OK = "ok"
 INGEST_INVALID = "invalid"
 INGEST_DUPLICATE = "duplicate"
+INGEST_NOT_FOUND = "not_found"
 INGEST_FETCH_ERR = "fetch_error"
 INGEST_DB_ERR = "db_error"
 
@@ -43,6 +44,9 @@ def ingest_doi(raw: str) -> str:
         return INGEST_DB_ERR
     try:
         paper = fetch_metadata(clean)
+    except DOINotFound as e:
+        app.logger.warning("DOI %r not found: %s", clean, e)
+        return INGEST_NOT_FOUND
     except Exception as e:
         app.logger.error("fetch_metadata failed for %r: %s", clean, e)
         return INGEST_FETCH_ERR
@@ -185,8 +189,10 @@ def submit():
         return render_page(400, "Invalid DOI format. Please use 10.xxxx/xxxx or a DOI URL.")
     if result == INGEST_DUPLICATE:
         return render_page(409, "DOI is already in the list.")
+    if result == INGEST_NOT_FOUND:
+        return render_page(404, "DOI not found in Crossref or DataCite. Check for a typo, or the DOI may not be registered yet.")
     if result == INGEST_FETCH_ERR:
-        return render_page(502, "Could not fetch metadata for that DOI. Please check it and try again.")
+        return render_page(502, "Could not reach the metadata service for that DOI. Please try again later.")
     return render_page(500, "Database error. Please try again.")
 
 
@@ -287,18 +293,26 @@ def export_bib():
     )
 
 
+PREPRINT_SERVERS = ("biorxiv", "medrxiv", "arxiv")
+
+
 def citation_text(p: Paper) -> str:
     """Display string for the markdown export's citation link.
 
-    Preprint servers (bioRxiv, medRxiv) get "Journal:article_id" format;
+    Preprint servers (bioRxiv, medRxiv, arXiv) get "Journal:article_id" format;
     journals with volume/pages get "Journal Volume:Pages".
     """
     if not p.journal:
         return p.doi
-    if p.journal.lower() in ("biorxiv", "medrxiv"):
+    server = p.journal.lower()
+    if server in PREPRINT_SERVERS:
         idx = p.doi.find("/")
         if idx >= 0:
-            return f"{p.journal}:{p.doi[idx+1:]}"
+            suffix = p.doi[idx + 1:]
+            # arXiv DOIs look like 10.48550/arXiv.2609.22597; drop the redundant prefix
+            if suffix.lower().startswith(server + "."):
+                suffix = suffix[len(server) + 1:]
+            return f"{p.journal}:{suffix}"
     if p.volume and p.pages:
         return f"{p.journal} {p.volume}:{p.pages}"
     if p.volume:

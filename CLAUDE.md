@@ -1,6 +1,6 @@
 # websitepapers
 
-A minimal Python web application for collecting and browsing academic papers by DOI. Users paste a DOI or DOI URL, the app fetches metadata from the Crossref API, and persists it to a local SQLite database. Papers can be browsed in a styled table, removed via a per-row delete button, and exported as Markdown or BibTeX.
+A minimal Python web application for collecting and browsing academic papers by DOI. Users paste a DOI or DOI URL, the app fetches metadata from the Crossref API (falling back to DataCite for arXiv/Zenodo/etc.), and persists it to a local SQLite database. Papers can be browsed in a styled table, removed via a per-row delete button, and exported as Markdown or BibTeX.
 
 ## Tech stack
 
@@ -10,7 +10,7 @@ A minimal Python web application for collecting and browsing academic papers by 
 - **Production server**: Gunicorn (used inside Docker via `wsgi.py`; `app.run()` is dev-only)
 - **Database**: SQLite via stdlib `sqlite3` (no cgo, no compiler needed). Path is read from `DB_PATH` env var (default `./dois.db`; Docker image sets `/storage/dois.db`)
 - **Auth**: optional HTTP Basic Auth via `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` env vars. If both are set, every route except `/up` requires the credentials; if either is unset, auth is disabled. Compared with `secrets.compare_digest` (constant-time). Intended for ONCE-hosted deployments where ONCE handles TLS but not app-level auth.
-- **External API**: Crossref (`https://api.crossref.org/works/{doi}`), 10s urllib timeout, polite-pool `User-Agent` header
+- **External APIs**: Crossref (`https://api.crossref.org/works/{doi}`) first; on a Crossref 404, DataCite (`https://api.datacite.org/dois/{doi}`). 10s urllib timeout, polite-pool `User-Agent` header on both
 - **HTTP client**: stdlib `urllib.request`
 - **Unicode**: stdlib `unicodedata` (NFD normalization for ASCII-folding citation keys)
 - **Package manager**: `uv` (project mode via `pyproject.toml`; no `requirements.txt`)
@@ -23,10 +23,11 @@ app.py                — Flask app, routes, citation_text, dev entry point
 wsgi.py               — Gunicorn entry point: imports app, calls init_db() at module load
 db.py                 — Paper dataclass, init_db, get/insert/delete/exists; DB_PATH env var
 doi.py                — DOI_REGEX, normalize_doi
-crossref.py           — fetch_metadata, given_initials, CROSSREF_BASE
+crossref.py           — fetch_metadata (Crossref → DataCite), DOINotFound, _from_crossref,
+                        _from_datacite, given_initials, CROSSREF_BASE, DATACITE_BASE
 bibtex.py             — write_bib_entry, bib_key, bib_alpha, bib_ascii_fold,
                         bib_authors, bib_escape
-test_app.py           — pytest tests (89 cases, mostly @pytest.mark.parametrize)
+test_app.py           — pytest tests (99 cases, mostly @pytest.mark.parametrize)
 templates/index.html  — single Jinja2 template (UI)
 pyproject.toml        — project metadata + Flask + Gunicorn (dependency-group dev: pytest)
 uv.lock               — uv's dependency lockfile (generated)
@@ -66,7 +67,7 @@ Direct invocation also works: `uv run python app.py`, `uv run pytest`.
 | GET    | `/export`     | Download `papers.md` — all papers as Markdown                                  |
 | GET    | `/export.bib` | Download `papers.bib` — all papers as BibTeX                                   |
 
-Error paths return real HTTP status codes (400 invalid DOI, 409 duplicate, 500 db/insert/delete, 502 Crossref upstream failure).
+Error paths return real HTTP status codes (400 invalid DOI, 404 DOI unknown to both Crossref and DataCite, 409 duplicate, 500 db/insert/delete, 502 upstream HTTP failure other than 404).
 
 ### Request hardening
 
@@ -104,14 +105,14 @@ Field order matches the SELECT column order in `get_papers`, so `Paper(*row)` wo
 | `_security_headers(resp)`       | `@app.after_request` hook — adds `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`       |
 | `home()`                        | Render paper list (GET only)                                                                                        |
 | `health()`                      | `GET /up` — returns `("OK", 200, {"Content-Type": "text/plain; charset=utf-8"})`                                    |
-| `ingest_doi(raw)`               | Shared kernel: normalize → validate → dedupe → fetch → insert; returns `INGEST_OK`/`INVALID`/`DUPLICATE`/`FETCH_ERR`/`DB_ERR`. Used by both `submit()` and `import_file()`. Errors logged inside. |
-| `submit()`                      | Calls `ingest_doi` on form `doi`; maps tag → HTTP response (303 on OK, 400/409/500/502 otherwise)                   |
+| `ingest_doi(raw)`               | Shared kernel: normalize → validate → dedupe → fetch → insert; returns `INGEST_OK`/`INVALID`/`DUPLICATE`/`NOT_FOUND`/`FETCH_ERR`/`DB_ERR`. `DOINotFound` → `NOT_FOUND` (logged WARNING); any other fetch exception → `FETCH_ERR` (logged ERROR). Used by both `submit()` and `import_file()`. |
+| `submit()`                      | Calls `ingest_doi` on form `doi`; maps tag → HTTP response (303 on OK, 400/404/409/500/502 otherwise)               |
 | `import_file()`                 | `POST /import` — read uploaded `.txt`, ingest each non-blank line, summary banner: `Imported N. Failed: <lines>`     |
 | `delete()`                      | Delete by form `id`, 303 → `/`                                                                                      |
 | `_md_authors(authors)`          | Truncate to first author + `" et al."` when there are more than 5 authors; used by `export_md()`                   |
 | `export_md()`                   | Stream `papers.md` (`text/markdown; charset=utf-8`)                                                                 |
 | `export_bib()`                  | Stream `papers.bib` (`application/x-bibtex; charset=utf-8`)                                                         |
-| `citation_text(p)`              | Display string for the markdown export's citation link (preprint-aware)                                             |
+| `citation_text(p)`              | Display string for the markdown export's citation link (preprint-aware; `PREPRINT_SERVERS` = biorxiv/medrxiv/arxiv) |
 | `render_page(status, message)`  | Render `index.html` with current papers list                                                                        |
 | `respond_err(status, msg, err)` | Log err and render error page in one call (analogue of Go's `respondErr` helper)                                    |
 
@@ -137,13 +138,20 @@ Each function opens its own connection via `_connect()`; SQLite is per-call, not
 | `DOI_REGEX`        | `^10\.\d{4,}(?:\.\d+)?/\S+$` (IGNORECASE)         |
 
 ### crossref.py
-|       Function        |                                                    Purpose                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `fetch_metadata(doi)` | GET Crossref via urllib, parse JSON into `Paper`                                                              |
-| `given_initials(s)`   | One initial per letter-run: `"Andrew A.G."` → `"A. A. G."`                                                    |
-| `CROSSREF_BASE`       | Module-level constant `https://api.crossref.org` — monkey-patched by tests via `crossref.CROSSREF_BASE = ...` |
+|         Function          |                                                                   Purpose                                                                    |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetch_metadata(doi)`     | GET Crossref; on 404 GET DataCite; parse whichever answers into `Paper`. Raises `DOINotFound` if both 404, `RuntimeError` on any other HTTP error (no fallback on 5xx) |
+| `_get_json(url)`          | urllib GET with polite `User-Agent`, returns parsed JSON; lets `HTTPError` propagate                                                          |
+| `_from_crossref(doi, m)`  | Map a Crossref `message` dict onto `Paper` (see "Crossref metadata parsing")                                                                 |
+| `_from_datacite(doi, m)`  | Map a DataCite JSON:API `data.attributes` dict onto `Paper` (see "DataCite metadata parsing")                                                |
+| `DOINotFound`             | `RuntimeError` subclass — app maps it to 404 instead of 502                                                                                  |
+| `given_initials(s)`       | One initial per letter-run: `"Andrew A.G."` → `"A. A. G."`                                                                                   |
+| `CROSSREF_BASE`           | `https://api.crossref.org` — monkey-patched by tests via `crossref.CROSSREF_BASE = ...`                                                      |
+| `DATACITE_BASE`           | `https://api.datacite.org`                                                                                                                   |
 
-The Crossref response is parsed as a plain `dict`. Missing keys yield empty strings via `dict.get(...) or fallback`.
+Both responses are parsed as plain `dict`s. Missing keys yield empty strings via `dict.get(...) or fallback`.
+
+Why the fallback: arXiv (`10.48550/arXiv.*`), Zenodo, Figshare, OSF and most dataset DOIs are registered with DataCite, not Crossref, so Crossref returns 404 for them. bioRxiv/medRxiv happen to register with Crossref, so they never hit the fallback.
 
 ### bibtex.py
 |            Function             |                                                                                   Purpose                                                                                   |
@@ -191,6 +199,16 @@ The first two raise `sqlite3.OperationalError("duplicate column name")` once the
 - **Year**: first available year from `published-print` → `published-online` → `issued` (`date-parts[0][0]`)
 - Non-200 responses raise `RuntimeError("DOI not found (status N)")` — urllib raises `HTTPError` on 4xx/5xx, which is caught and translated.
 
+## DataCite metadata parsing (`_from_datacite` in crossref.py)
+
+Response shape is JSON:API: everything lives under `data.attributes`.
+
+- **Title**: `titles[0].title`
+- **Journal**: `container.title`; falls back to `publisher` (a string in older API versions, `{"name": ...}` in newer ones — both handled). For arXiv this yields `"arXiv"`.
+- **Volume / Pages**: `container.volume`, `container.firstPage`-`container.lastPage`. Empty for preprints.
+- **Authors**: `creators[].familyName` + `given_initials(givenName)`; when neither is present (organisations, or names only given as `"Family, Given"`), `name` is split on the first comma.
+- **Year**: `publicationYear`
+
 ## DOI handling
 
 - Accepted input: bare DOI (`10.xxxx/...`) or URL variants (`https://doi.org/...`, `https://dx.doi.org/...`, `doi.org/...`, `dx.doi.org/...`)
@@ -217,7 +235,7 @@ Authors (Year)
 The `Authors (Year)` line drops the `(Year)` suffix entirely when `Year` is empty. When a paper has more than 5 authors, only the first author is shown followed by `et al.` (BibTeX export is unaffected).
 
 `citation_text()` formats the citation link text as:
-- **bioRxiv / medRxiv** (case-insensitive journal match): `Journal:doi_suffix` (e.g. `bioRxiv:2026.04.27.721195`)
+- **bioRxiv / medRxiv / arXiv** (case-insensitive journal match against `PREPRINT_SERVERS`): `Journal:doi_suffix` (e.g. `bioRxiv:2026.04.27.721195`). If the suffix itself starts with `<journal>.` it is stripped, so `10.48550/arxiv.2609.22597` → `arXiv:2609.22597`
 - **Volume + Pages**: `Journal Volume:Pages` (e.g. `J Neurophysiol 135:1175–1185`)
 - **Volume only**: `Journal Volume`
 - **Pages only**: `Journal Pages`
@@ -260,7 +278,8 @@ gunicorn --bind 0.0.0.0:80 --user app --group app --workers 2 --access-logfile -
 - `test_normalize_doi` — every prefix variant, casing, whitespace
 - `test_citation_text` — bioRxiv/medRxiv special case + every volume/pages combo
 - `test_md_authors` — ≤5 authors unchanged, >5 authors → first + et al.
-- `test_fetch_metadata_*` — happy path (asserts UA, URL), 404, article-number fallback, year priority fallthrough, bioRxiv institution fallback, trailing-slash on base
+- `test_fetch_metadata_*` — happy path (asserts UA, URL), 404 on both APIs → `DOINotFound` (asserts both URLs hit in order), Crossref 5xx → no fallback, DataCite fallback for arXiv (asserts URLs + UA + parsed fields), DataCite publisher-as-object / container / `"Family, Given"` name splitting, article-number fallback, year priority fallthrough, bioRxiv institution fallback, trailing-slash on base
+- `test_submit_*` — arXiv DOI via DataCite → 303 and stored with `arXiv:` citation; unknown DOI → 404 with message, DB untouched; upstream 503 → 502
 - `test_given_initials` — single, multi, smashed (`A.G.`), hyphenated, Unicode
 - `test_bib_authors` — single + multi-author, multi-word surnames, multi-initial
 - `test_bib_escape` — every escaped char (this is the regression that caught the sequential-replace bug)

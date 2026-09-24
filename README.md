@@ -1,18 +1,19 @@
 # websitepapers
 
-A minimal Python web application for collecting and browsing academic papers by DOI. Paste a DOI (or DOI URL), and the app fetches metadata from the [Crossref API](https://www.crossref.org/) and stores it in a local SQLite database. Browse your library in the web UI, delete papers you no longer want, and export the lot as Markdown or BibTeX.
+A minimal Python web application for collecting and browsing academic papers by DOI. Paste a DOI (or DOI URL), and the app fetches metadata from the [Crossref API](https://www.crossref.org/) (falling back to [DataCite](https://datacite.org/) for arXiv, Zenodo and other non-Crossref DOIs) and stores it in a local SQLite database. Browse your library in the web UI, delete papers you no longer want, and export the lot as Markdown or BibTeX.
 
 ## Features
 
 - Paste a bare DOI (`10.xxxx/...`) or any common URL form (`https://doi.org/...`, `dx.doi.org/...`)
 - Bulk-import from a text file (one DOI or DOI URL per line; blank lines ignored)
 - Automatic metadata lookup via Crossref (title, authors, journal, year, volume, pages); identifies the client to Crossref's polite pool via `User-Agent`
+- Falls back to the DataCite API when Crossref doesn't know the DOI (arXiv, Zenodo, Figshare, OSF, datasets)
 - Multi-initial parsing of given names (e.g. `Andrew A.G. Mattar`, `Marie-Claude`, Unicode like `Émile`)
 - Case-insensitive duplicate detection (DOIs are officially case-insensitive)
 - Browse all papers in a styled table, newest first; per-row ✕ delete button
 - One-click export to Markdown (`papers.md`)
 - One-click export to BibTeX (`papers.bib`) with proper `Family, Given` author format and ASCII-folded citation keys
-- Preprint-aware journal-name resolution and citation formatting for bioRxiv / medRxiv
+- Preprint-aware journal-name resolution and citation formatting for bioRxiv / medRxiv / arXiv
 
 ## Requirements
 
@@ -74,9 +75,9 @@ Authors (Year)
 
 When a paper has more than 5 authors, only the first author is shown followed by `et al.`
 
-The citation text adapts to what Crossref returns:
+The citation text adapts to what the metadata source returns:
 
-- **bioRxiv / medRxiv**: `bioRxiv:2026.04.27.721195`
+- **bioRxiv / medRxiv / arXiv**: `bioRxiv:2026.04.27.721195`, `arXiv:2609.22597`
 - **Volume + Pages**: `J Neurophysiol 135:1175–1185`
 - **Volume only**: `J Neurophysiol 135`
 - **Pages only**: `J Neurophysiol 1175–1185`
@@ -176,7 +177,7 @@ app.py                — Flask app, routes, citation_text
 wsgi.py               — Gunicorn entry point (calls init_db at import)
 db.py                 — Paper dataclass, sqlite ops
 doi.py                — DOI regex + normalizer
-crossref.py           — Crossref client + given_initials
+crossref.py           — Crossref + DataCite client, given_initials
 bibtex.py             — BibTeX export helpers
 test_app.py           — pytest tests
 templates/index.html  — Jinja2 template (UI)

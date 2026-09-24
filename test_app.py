@@ -10,7 +10,7 @@ import crossref
 import db
 from app import _md_authors, citation_text
 from bibtex import bib_ascii_fold, bib_authors, bib_escape, bib_key
-from crossref import fetch_metadata, given_initials
+from crossref import DOINotFound, fetch_metadata, given_initials
 from db import Paper
 from doi import normalize_doi
 
@@ -65,6 +65,9 @@ def test_normalize_doi(inp, want):
     (Paper(doi="10.1101/2026.04.27.721195", journal="bioRxiv"), "bioRxiv:2026.04.27.721195"),
     (Paper(doi="10.1101/2026.04.27.721195", journal="BioRxiv"), "BioRxiv:2026.04.27.721195"),
     (Paper(doi="10.1101/abc", journal="medRxiv"), "medRxiv:abc"),
+    (Paper(doi="10.48550/arxiv.2609.22597", journal="arXiv"), "arXiv:2609.22597"),
+    (Paper(doi="10.48550/ARXIV.2609.22597", journal="arXiv"), "arXiv:2609.22597"),
+    (Paper(doi="10.48550/2609.22597", journal="arXiv"), "arXiv:2609.22597"),
     (Paper(journal="J Neurophysiol", volume="135", pages="1175-1185"), "J Neurophysiol 135:1175-1185"),
     (Paper(journal="Nature", volume="600"), "Nature 600"),
     (Paper(journal="Nature", pages="12"), "Nature 12"),
@@ -102,12 +105,107 @@ def test_fetch_metadata_happy_path():
     assert p.authors == "Smith A., Gribble P. L., Zola É."
 
 
-def test_fetch_metadata_404():
+def test_fetch_metadata_404_everywhere_raises_not_found():
+    urls = []
+
     def fake(req, timeout=None):
+        urls.append(req.full_url)
         raise urllib.error.HTTPError(req.full_url, 404, "nope", {}, None)
     with patch("urllib.request.urlopen", side_effect=fake):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(DOINotFound):
             fetch_metadata("10.1/x")
+    assert urls == [
+        "https://api.crossref.org/works/10.1%2Fx",
+        "https://api.datacite.org/dois/10.1%2Fx",
+    ]
+
+
+def test_fetch_metadata_crossref_5xx_does_not_fall_back():
+    urls = []
+
+    def fake(req, timeout=None):
+        urls.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
+    with patch("urllib.request.urlopen", side_effect=fake):
+        with pytest.raises(RuntimeError) as ei:
+            fetch_metadata("10.1/x")
+    assert not isinstance(ei.value, DOINotFound)
+    assert len(urls) == 1
+
+
+_DATACITE_ARXIV = {"data": {"attributes": {
+    "titles": [{"title": "Deviations from global coupling"}],
+    "creators": [
+        {"name": "Gast, Richard", "givenName": "Richard", "familyName": "Gast"},
+        {"name": "Kennedy, Ann", "givenName": "Ann", "familyName": "Kennedy"},
+    ],
+    "publisher": "arXiv",
+    "publicationYear": 2026,
+    "container": {},
+}}}
+
+
+def _crossref_404_then_datacite(body, captured=None):
+    """Crossref → 404, DataCite → body. Records every URL requested."""
+    def fake(req, timeout=None):
+        if captured is not None:
+            captured.setdefault("urls", []).append(req.full_url)
+            captured["user_agent"] = req.get_header("User-agent")
+        if "crossref" in req.full_url:
+            raise urllib.error.HTTPError(req.full_url, 404, "nope", {}, None)
+        return _mock_response(body)
+    return fake
+
+
+def test_fetch_metadata_datacite_fallback_arxiv():
+    captured = {}
+    with patch("urllib.request.urlopen", side_effect=_crossref_404_then_datacite(_DATACITE_ARXIV, captured)):
+        p = fetch_metadata("10.48550/arxiv.2609.22597")
+    assert captured["urls"] == [
+        "https://api.crossref.org/works/10.48550%2Farxiv.2609.22597",
+        "https://api.datacite.org/dois/10.48550%2Farxiv.2609.22597",
+    ]
+    assert captured["user_agent"] == crossref.USER_AGENT
+    assert p.doi == "10.48550/arxiv.2609.22597"
+    assert p.title == "Deviations from global coupling"
+    assert p.authors == "Gast R., Kennedy A."
+    assert p.journal == "arXiv"
+    assert p.year == "2026"
+    assert p.volume == ""
+    assert p.pages == ""
+
+
+def test_fetch_metadata_datacite_publisher_object_and_container():
+    body = {"data": {"attributes": {
+        "titles": [{"title": "T"}],
+        "creators": [
+            {"name": "Müller, Hans-Peter"},          # no familyName/givenName split
+            {"name": "Some Consortium"},             # organisation, no comma
+        ],
+        "publisher": {"name": "Zenodo"},
+        "publicationYear": 2021,
+        "container": {"title": "Data J", "volume": "7", "firstPage": "10", "lastPage": "20"},
+    }}}
+    with patch("urllib.request.urlopen", side_effect=_crossref_404_then_datacite(body)):
+        p = fetch_metadata("10.5281/zenodo.1")
+    assert p.journal == "Data J"
+    assert p.volume == "7"
+    assert p.pages == "10-20"
+    assert p.authors == "Müller H. P., Some Consortium"
+    assert p.year == "2021"
+
+
+def test_fetch_metadata_datacite_publisher_string_when_no_container():
+    body = {"data": {"attributes": {
+        "titles": [{"title": "T"}],
+        "creators": [],
+        "publisher": {"name": "Zenodo"},
+        "publicationYear": 2021,
+    }}}
+    with patch("urllib.request.urlopen", side_effect=_crossref_404_then_datacite(body)):
+        p = fetch_metadata("10.5281/zenodo.1")
+    assert p.journal == "Zenodo"
+    assert p.authors == ""
 
 
 def test_fetch_metadata_article_number_fallback():
@@ -340,6 +438,36 @@ def test_import_crossref_404_on_one_line(client):
     body = resp.get_data(as_text=True)
     assert "Imported 2." in body
     assert "Failed: 10.1234/bad" in body
+
+
+def test_submit_arxiv_doi_via_datacite(client):
+    with patch("urllib.request.urlopen", side_effect=_crossref_404_then_datacite(_DATACITE_ARXIV)):
+        resp = client.post("/submit", data={"doi": "https://doi.org/10.48550/arXiv.2609.22597"})
+    assert resp.status_code == 303
+    papers = db.get_papers()
+    assert len(papers) == 1
+    assert papers[0].doi == "10.48550/arxiv.2609.22597"
+    assert papers[0].journal == "arXiv"
+    assert citation_text(papers[0]) == "arXiv:2609.22597"
+
+
+def test_submit_unknown_doi_returns_404(client):
+    def fake(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 404, "nope", {}, None)
+    with patch("urllib.request.urlopen", side_effect=fake):
+        resp = client.post("/submit", data={"doi": "10.1234/nope"})
+    assert resp.status_code == 404
+    assert "not found in Crossref or DataCite" in resp.get_data(as_text=True)
+    assert db.get_papers() == []
+
+
+def test_submit_upstream_outage_returns_502(client):
+    def fake(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
+    with patch("urllib.request.urlopen", side_effect=fake):
+        resp = client.post("/submit", data={"doi": "10.1234/x"})
+    assert resp.status_code == 502
+    assert db.get_papers() == []
 
 
 def test_import_empty_file(client):
